@@ -1,44 +1,49 @@
 #!/bin/bash
 ###############################################################
-# 🔥 Pannel Server CentOS 7 Installer + phpMyAdmin + FileManager
+# 🔥 Pannel Server CentOS 7 Installer + phpMyAdmin + TinyFileManager + HTTPS
 # ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
 # 👑 Copyright (C) 2025 Việt_Anh_Code™
 ###############################################################
 
 set -e
 
-# ====== Cyberpunk Logo Nhấp Nháy ======
+# ===== Cyberpunk Logo =====
 logo() {
 echo -e "\e[5;38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
 echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ ___| \e[0m"
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Safe V2 + HTTPS\e[0m"
 }
+
 clear
 logo
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
 echo "--------------------------------------------------"
 
-# Kiểm tra quyền root
+# Kiểm tra root
 if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
 
-# Nhập thông tin
-read -p "Nhập domain quản trị server (VD: domain.com) hoặc để trống dùng IP: " ADMIN_DOMAIN
+# Nhập domain + port
+read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
-read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
 
-# Firewall
-systemctl start firewalld
-systemctl enable firewalld
+# ===== Tạo random password =====
+PANEL_DB="panel_db"
+PANEL_USER="panel_user"
+PANEL_PASS=$(openssl rand -base64 12)  # ~16 ký tự
+WEB_ADMIN_PASS=$(openssl rand -base64 12)  # ~16 ký tự
 
-# Cập nhật hệ thống & gói cơ bản
+# ===== Firewall =====
+systemctl enable --now firewalld
+
+# ===== Cập nhật & cài gói cơ bản =====
 yum update -y
-yum install -y wget nano curl epel-release yum-utils firewalld unzip policycoreutils-python
+yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python
 
 # ===== Fix repo CentOS 7 Vault =====
 sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
@@ -48,13 +53,11 @@ name=CentOS-7 - Base - Archive
 baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
 gpgcheck=0
 enabled=1
-
 [updates]
 name=CentOS-7 - Updates - Archive
 baseurl=http://vault.centos.org/7.9.2009/updates/x86_64/
 gpgcheck=0
 enabled=1
-
 [extras]
 name=CentOS-7 - Extras - Archive
 baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
@@ -64,23 +67,26 @@ EOF
 yum clean all
 yum makecache
 
-# ===== SSH config =====
-cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
-grep -q "^Port 2222" /etc/ssh/sshd_config || echo "Port 2222" >> /etc/ssh/sshd_config
+# ===== SSH setup =====
+SSH_PORT=2222
+if ! grep -q "^Port $SSH_PORT" /etc/ssh/sshd_config; then
+    sed -i "/^Port /d" /etc/ssh/sshd_config
+    echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
+fi
 sshd -t && systemctl restart sshd
-firewall-cmd --permanent --add-port=2222/tcp
+firewall-cmd --permanent --add-port=$SSH_PORT/tcp
 firewall-cmd --reload
 
-# ===== Disable SELinux tạm =====
+# ===== SELinux & DNS =====
+cp /etc/selinux/config /etc/selinux/config.bak
 setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
 
-# ===== DNS fix =====
-sed -i 's/nameserver/#nameserver/g' /etc/resolv.conf || true
-echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+cp /etc/resolv.conf /etc/resolv.conf.bak
+grep -q "nameserver 8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
-# ===== PHP repo & install =====
-yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
+# ===== PHP 8.0 =====
+yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
 yum-config-manager --enable remi-php80
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
 
@@ -89,7 +95,7 @@ systemctl stop mariadb 2>/dev/null || true
 yum remove -y MariaDB* mariadb* || true
 rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
 
-# ===== MariaDB repo =====
+# ===== MariaDB repo 10.5 =====
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
@@ -105,12 +111,13 @@ yum install -y nginx
 systemctl enable nginx php-fpm mariadb
 systemctl start nginx php-fpm mariadb
 
-# ===== MariaDB root & create panel DB =====
+# ===== MariaDB setup =====
 mysql -u root <<EOF
-SET PASSWORD FOR 'root'@'localhost' = PASSWORD('Conmemi01@');
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
 FLUSH PRIVILEGES;
 CREATE DATABASE IF NOT EXISTS ${PANEL_DB};
-GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
+CREATE USER IF NOT EXISTS '${PANEL_USER}'@'localhost' IDENTIFIED BY '${PANEL_PASS}';
+GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO '${PANEL_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
@@ -123,18 +130,28 @@ rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.z
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# ===== TinyFileManager =====
+# ===== TinyFileManager + admin random =====
 mkdir -p /var/www/html/filemanager
-wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
+wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
+
+TINYFM_CONFIG="/var/www/html/filemanager/tfm-config.php"
+cat > $TINYFM_CONFIG <<EOF
+<?php
+\$username = 'admin';
+\$password = '$WEB_ADMIN_PASS';
+\$salt = '';
+\$upload_dir = __DIR__;
+?>
+EOF
+
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# ===== Nginx safe panel setup =====
+# ===== Nginx config panel =====
 NGINX_CONF="/etc/nginx/conf.d/panel.conf"
 [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
 
-# Check port free
-if ss -tuln | grep -q ":${ADMIN_PORT} "; then
+if ss -tuln | awk '{print $4}' | grep -q ":${ADMIN_PORT}$"; then
     echo "❌ Port ${ADMIN_PORT} đang bị chiếm, đổi port khác!"
     exit 1
 fi
@@ -143,7 +160,6 @@ cat > "$NGINX_CONF" <<EOF
 server {
     listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN:-_};
-
     root /var/www/html;
     index index.php index.html index.htm;
 
@@ -153,41 +169,51 @@ server {
 
     location ~ \.php\$ {
         include fastcgi_params;
-        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_pass unix:/var/run/php-fpm/www.sock;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
 }
 EOF
 
-# Xoá pid cũ
 rm -f /var/run/nginx.pid
-
-# Chown folder web
 chown -R nginx:nginx /var/www/html
 chmod -R 755 /var/www/html
-
-# Test & restart nginx
 nginx -t && systemctl restart nginx
 
-# Firewall
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
 firewall-cmd --reload
 
-# ===== Hoàn tất =====
+# ===== Auto SSL Let’s Encrypt =====
+if [ -n "$ADMIN_DOMAIN" ]; then
+  echo "🔐 Cài Let’s Encrypt SSL cho ${ADMIN_DOMAIN}..."
+  yum install -y epel-release
+  yum install -y certbot python2-certbot-nginx
+
+  certbot --nginx -d $ADMIN_DOMAIN --non-interactive --agree-tos -m admin@$ADMIN_DOMAIN --redirect
+  systemctl reload nginx
+  echo "✅ SSL đã cài xong, tự động redirect HTTP → HTTPS"
+else
+  echo "⚠️ Không nhập domain, bỏ qua SSL Let’s Encrypt"
+fi
+
+# ===== Hoàn tất & auto reboot =====
 echo ""
-echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
+echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7 Safe V2 + HTTPS + admin random!"
 echo "Domain/IP quản trị: ${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}"
-echo "Port SSH: 2222"
+echo "Port SSH: $SSH_PORT"
 echo "MySQL root password: Conmemi01@"
 echo "Database panel: ${PANEL_DB}"
+echo "DB user: ${PANEL_USER}"
+echo "DB password: ${PANEL_PASS}"
+echo "Web admin user: admin"
+echo "Web admin password: $WEB_ADMIN_PASS"
 echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin"
 echo "Truy cập FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager"
 echo "--------------------------------------------------"
-echo "👑 Việt_Anh_Code™ 2025 | CentOS V1 Cyberpunk Edition"
-
-echo "🕒 Server sẽ tự reboot sau 10 giây..."
+echo "👑 Việt_Anh_Code™ 2025 | CentOS Safe V2 Cyberpunk + HTTPS + admin"
+echo "✅ Server sẽ tự reboot sau 10 giây..."
 sleep 10
 reboot
