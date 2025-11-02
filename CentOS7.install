@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################
-# 🔥 Pannel Server CentOS 7 Installer + 403 Fix + Auto-Reboot
+# 🔥 Pannel Server CentOS 7 Installer + phpMyAdmin + FileManager
 # ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
 # 👑 Copyright (C) 2025 Việt_Anh_Code™
 ###############################################################
@@ -15,18 +15,18 @@ if [ $(id -u) != "0" ]; then
   exit 1
 fi
 
-# Nhập domain & ports
+# Nhập domain & port quản trị
 read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
-read -p "Nhập tên database cho panel (VD: abcd): " PANEL_DB
+read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
 
-# Bật Firewalld
+# Firewalld
 systemctl start firewalld
 systemctl enable firewalld
 
-# Cập nhật & cài các gói cơ bản
+# Cập nhật & cài gói cơ bản
 yum update -y
-yum install -y wget nano curl epel-release yum-utils firewalld
+yum install -y wget nano curl epel-release yum-utils firewalld unzip
 
 # SSH config
 sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
@@ -77,29 +77,34 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# phpMyAdmin (link giống HocVPS)
+# phpMyAdmin
 mkdir -p /var/www/html/phpmyadmin
-wget -O /var/www/html/phpmyadmin/index.php https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
-# (Sau khi tải xong, cần unzip thủ công hoặc thêm unzip vào script)
+wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
+unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
+mv /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages/* /var/www/html/phpmyadmin/
+rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.zip
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# TinyFileManager (web file manager ổn định)
+# TinyFileManager
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# Nginx server block
+# Nginx server block cho quản trị
 cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
-    listen 80;
+    listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN};
+
     root /var/www/html;
-    index index.php;
+    index index.php index.html index.htm;
+
     location / {
         try_files \$uri \$uri/ =404;
     }
+
     location ~ \.php\$ {
         include fastcgi_params;
         fastcgi_pass 127.0.0.1:9000;
@@ -109,7 +114,7 @@ server {
 }
 EOF
 
-# Fix 403: ensure php-fpm is running
+# Ensure php-fpm chạy
 systemctl enable php-fpm
 systemctl restart php-fpm
 
@@ -125,8 +130,7 @@ firewall-cmd --reload
 # Summary
 echo ""
 echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
-echo "Domain quản trị: ${ADMIN_DOMAIN}"
-echo "Port quản trị: ${ADMIN_PORT}"
+echo "Domain quản trị: ${ADMIN_DOMAIN}:${ADMIN_PORT}"
 echo "Port SSH: 2222"
 echo "MySQL root password: Conmemi01@"
 echo "Database panel: ${PANEL_DB}"
@@ -136,12 +140,6 @@ echo "Truy cập FileManager: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/filemanager"
 echo "--------------------------------------------------"
 echo "👑 Việt_Anh_Code™ 2025"
 
-# Auto reboot sau 10 giây
-echo ""
-echo "🔄 Hệ thống sẽ tự reboot sau 10 giây..."
-for i in $(seq 10 -1 1); do
-    echo -ne "⏳ Reboot sau $i giây...\r"
-    sleep 1
-done
-echo ""
+echo "🕒 Server sẽ tự reboot sau 10 giây..."
+sleep 10
 reboot
