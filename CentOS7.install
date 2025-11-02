@@ -1,17 +1,13 @@
 #!/bin/bash
 ###############################################################
-# 🔥 Pannel Server CentOS 7 Installer + 403 Fix
-# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + Adminer + TinyFileManager
+# 🔥 Pannel Server CentOS 7 Installer + 403 Fix + Auto-Reboot
+# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
 # 👑 Copyright (C) 2025 Việt_Anh_Code™
 ###############################################################
 
 set -e
 
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
-echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
-echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
-echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
-echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
 echo "--------------------------------------------------"
 
 if [ $(id -u) != "0" ]; then
@@ -81,11 +77,12 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# Adminer (web panel)
-mkdir -p /var/www/html/adminer
-wget -O /var/www/html/adminer/index.php https://www.adminer.org/latest.php
-chown -R nginx:nginx /var/www/html/adminer
-chmod -R 755 /var/www/html/adminer
+# phpMyAdmin (link giống HocVPS)
+mkdir -p /var/www/html/phpmyadmin
+wget -O /var/www/html/phpmyadmin/index.php https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip
+# (Sau khi tải xong, cần unzip thủ công hoặc thêm unzip vào script)
+chown -R nginx:nginx /var/www/html/phpmyadmin
+chmod -R 755 /var/www/html/phpmyadmin
 
 # TinyFileManager (web file manager ổn định)
 mkdir -p /var/www/html/filemanager
@@ -98,7 +95,7 @@ cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
     server_name ${ADMIN_DOMAIN};
-    root /var/www/html/adminer;
+    root /var/www/html;
     index index.php;
     location / {
         try_files \$uri \$uri/ =404;
@@ -134,7 +131,17 @@ echo "Port SSH: 2222"
 echo "MySQL root password: Conmemi01@"
 echo "Database panel: ${PANEL_DB}"
 echo "Database user: root"
-echo "Truy cập Adminer: http://${ADMIN_DOMAIN}/"
-echo "Truy cập FileManager: http://${ADMIN_DOMAIN}/filemanager"
+echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/phpmyadmin"
+echo "Truy cập FileManager: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/filemanager"
 echo "--------------------------------------------------"
 echo "👑 Việt_Anh_Code™ 2025"
+
+# Auto reboot sau 10 giây
+echo ""
+echo "🔄 Hệ thống sẽ tự reboot sau 10 giây..."
+for i in $(seq 10 -1 1); do
+    echo -ne "⏳ Reboot sau $i giây...\r"
+    sleep 1
+done
+echo ""
+reboot
