@@ -28,15 +28,31 @@ if [ $(id -u) != "0" ]; then
   exit 1
 fi
 
-# Nhập domain + port
-read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
-read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
+# Nhập domain + port với validate
+while true; do
+    read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
+    if [[ -z "$ADMIN_DOMAIN" ]] || [[ "$ADMIN_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
+        break
+    else
+        echo "❌ Domain không hợp lệ, thử lại!"
+    fi
+done
+
+while true; do
+    read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
+    if [[ "$ADMIN_PORT" =~ ^[0-9]+$ ]] && [ "$ADMIN_PORT" -ge 1 ] && [ "$ADMIN_PORT" -le 65535 ]; then
+        break
+    else
+        echo "❌ Port không hợp lệ, thử lại!"
+    fi
+done
 
 # ===== Tạo random password =====
 PANEL_DB="panel_db"
 PANEL_USER="panel_user"
 PANEL_PASS=$(openssl rand -base64 12)  # ~16 ký tự
 WEB_ADMIN_PASS=$(openssl rand -base64 12)  # ~16 ký tự
+MYSQL_ROOT_PASS=$(openssl rand -base64 16)  # root password random
 
 # ===== Firewall =====
 systemctl enable --now firewalld
@@ -113,7 +129,7 @@ systemctl start nginx php-fpm mariadb
 
 # ===== MariaDB setup =====
 mysql -u root <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
 CREATE DATABASE IF NOT EXISTS ${PANEL_DB};
 CREATE USER IF NOT EXISTS '${PANEL_USER}'@'localhost' IDENTIFIED BY '${PANEL_PASS}';
@@ -151,9 +167,15 @@ chmod -R 755 /var/www/html/filemanager
 NGINX_CONF="/etc/nginx/conf.d/panel.conf"
 [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
 
-if ss -tuln | awk '{print $4}' | grep -q ":${ADMIN_PORT}$"; then
+if ss -tuln | awk '{print $4}' | grep -Eq "(:|\\.)${ADMIN_PORT}$"; then
     echo "❌ Port ${ADMIN_PORT} đang bị chiếm, đổi port khác!"
     exit 1
+fi
+
+# detect php-fpm socket
+PHP_FPM_SOCK="/var/run/php-fpm/www.sock"
+if [ ! -S "$PHP_FPM_SOCK" ]; then
+    PHP_FPM_SOCK="/run/php-fpm/www.sock"
 fi
 
 cat > "$NGINX_CONF" <<EOF
@@ -169,7 +191,7 @@ server {
 
     location ~ \.php\$ {
         include fastcgi_params;
-        fastcgi_pass unix:/var/run/php-fpm/www.sock;
+        fastcgi_pass unix:${PHP_FPM_SOCK};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
@@ -190,7 +212,7 @@ firewall-cmd --reload
 if [ -n "$ADMIN_DOMAIN" ]; then
   echo "🔐 Cài Let’s Encrypt SSL cho ${ADMIN_DOMAIN}..."
   yum install -y epel-release
-  yum install -y certbot python2-certbot-nginx
+  yum install -y certbot python3-certbot-nginx
 
   certbot --nginx -d $ADMIN_DOMAIN --non-interactive --agree-tos -m admin@$ADMIN_DOMAIN --redirect
   systemctl reload nginx
@@ -199,21 +221,36 @@ else
   echo "⚠️ Không nhập domain, bỏ qua SSL Let’s Encrypt"
 fi
 
-# ===== Hoàn tất & auto reboot =====
+# ===== Backup config + log credentials =====
+BACKUP_DIR="/root/panel_install_backup"
+mkdir -p "$BACKUP_DIR"
+cp -f /etc/nginx/conf.d/panel.conf "$BACKUP_DIR/panel.conf.bak"
+cp -f /etc/php-fpm.d/www.conf "$BACKUP_DIR/www.conf.bak" 2>/dev/null || true
+cp -f /etc/my.cnf "$BACKUP_DIR/my.cnf.bak" 2>/dev/null || true
+cp -f /etc/selinux/config "$BACKUP_DIR/selinux_config.bak"
+
+CREDENTIALS_FILE="$BACKUP_DIR/panel_credentials.txt"
+cat > "$CREDENTIALS_FILE" <<EOF
+===== PANEL SERVER CREDENTIALS =====
+Domain/IP quản trị: ${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
+Port SSH: $SSH_PORT
+MySQL root password: ${MYSQL_ROOT_PASS}
+Database panel: ${PANEL_DB}
+DB user: ${PANEL_USER}
+DB password: ${PANEL_PASS}
+Web admin user: admin
+Web admin password: $WEB_ADMIN_PASS
+Truy cập phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
+Truy cập FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
+EOF
+chmod 600 "$CREDENTIALS_FILE"
+echo "🔐 Tất cả thông tin quan trọng đã được backup vào: $CREDENTIALS_FILE (chỉ root đọc được)"
+
+# ===== Hoàn tất & chờ reboot =====
 echo ""
 echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7 Safe V2 + HTTPS + admin random!"
-echo "Domain/IP quản trị: ${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}"
-echo "Port SSH: $SSH_PORT"
-echo "MySQL root password: Conmemi01@"
-echo "Database panel: ${PANEL_DB}"
-echo "DB user: ${PANEL_USER}"
-echo "DB password: ${PANEL_PASS}"
-echo "Web admin user: admin"
-echo "Web admin password: $WEB_ADMIN_PASS"
-echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin"
-echo "Truy cập FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager"
-echo "--------------------------------------------------"
-echo "👑 Việt_Anh_Code™ 2025 | CentOS Safe V2 Cyberpunk + HTTPS + admin"
-echo "✅ Server sẽ tự reboot sau 10 giây..."
-sleep 10
+echo "Thông tin chi tiết đã backup vào $CREDENTIALS_FILE"
+echo ""
+
+read -p "Nhấn Enter để reboot server hoặc Ctrl+C để hủy..." dummy
 reboot
