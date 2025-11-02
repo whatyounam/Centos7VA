@@ -9,15 +9,12 @@ set -e
 
 # ========== Cyberpunk Logo ==========
 logo() {
-cat <<'LOGO'
-[38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  [0m
-[38;5;213m    |  _ \| \ | || ____| \ | || \ | | / ___|| | | |/ ___| [0m
-[38;5;45m    | |_) |  \| ||  _| |  \| ||  \| | \___ \| | | | |  _   [0m
-[38;5;213m    |  __/| |\  || |___| |\  || |\  |  ___) | |_| | |_| | [0m
-[38;5;201m    |_|   |_| \_||_____|_| \_||_| \_| |____/ \___/ \____| [0m
-[0m
-[38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition[0m
-LOGO
+echo -e "\e[38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
+echo -e "\e[38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ ___| \e[0m"
+echo -e "\e[38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
+echo -e "\e[38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
+echo -e "\e[38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
+echo -e "\e[38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition\e[0m"
 }
 clear
 logo
@@ -46,7 +43,6 @@ yum install -y wget nano curl epel-release yum-utils firewalld unzip
 # 🛠️ Fix lỗi repo CentOS 7 (Vault Mirror)
 echo "🛠️ Đang fix lỗi repo CentOS 7 (Vault Mirror)..."
 sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
-
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
 name=CentOS-7 - Base - Archive
@@ -66,14 +62,16 @@ baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
 gpgcheck=0
 enabled=1
 EOF
-
 yum clean all
 yum makecache
 
-# SSH config
-sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
-systemctl restart sshd
+# SSH config an toàn
+echo "🔐 Cấu hình SSH an toàn..."
+cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+grep -q "^Port 2222" /etc/ssh/sshd_config || echo "Port 2222" >> /etc/ssh/sshd_config
+sshd -t && systemctl restart sshd
 firewall-cmd --permanent --add-port=2222/tcp
+firewall-cmd --reload
 
 # Disable SELinux
 chattr -i /etc/selinux/config 2>/dev/null || true
@@ -100,7 +98,6 @@ name = MariaDB
 baseurl = https://archive.mariadb.org/mariadb-10.5/yum/centos7-amd64
 gpgcheck = 0
 EOF
-
 yum clean all
 yum makecache
 yum install -y MariaDB-server MariaDB-client
