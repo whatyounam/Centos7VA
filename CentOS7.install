@@ -28,7 +28,7 @@ if [ $(id -u) != "0" ]; then
   exit 1
 fi
 
-# Nhập domain + port với validate
+# ===== Nhập domain + port với validate =====
 while true; do
     read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
     if [[ -z "$ADMIN_DOMAIN" ]] || [[ "$ADMIN_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
@@ -50,11 +50,18 @@ done
 # ===== Tạo random password =====
 PANEL_DB="panel_db"
 PANEL_USER="panel_user"
-PANEL_PASS=$(openssl rand -base64 12)  # ~16 ký tự
-WEB_ADMIN_PASS=$(openssl rand -base64 12)  # ~16 ký tự
-MYSQL_ROOT_PASS=$(openssl rand -base64 16)  # root password random
+PANEL_PASS=$(openssl rand -base64 12)
+WEB_ADMIN_PASS=$(openssl rand -base64 12)
+MYSQL_ROOT_PASS=$(openssl rand -base64 16)
 
-# ===== Fix repo CentOS 7 Vault =====
+# ===== Firewall =====
+systemctl enable --now firewalld
+
+# ===== Cập nhật & gói cơ bản =====
+yum update -y
+yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python ca-certificates
+
+# ===== Fix repo CentOS Vault =====
 sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
@@ -74,16 +81,18 @@ gpgcheck=0
 enabled=1
 EOF
 yum clean all
-yum makecache
+yum makecache fast
 
-
-# ===== Firewall =====
-systemctl start --now firewalld
-systemctl enable --now firewalld
-
-# ===== Cập nhật & cài gói cơ bản =====
-yum update -y
-yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python
+# ===== MariaDB 10.5 repo =====
+cat > /etc/yum.repos.d/MariaDB.repo <<EOF
+[mariadb]
+name = MariaDB
+baseurl = http://yum.mariadb.org/10.5/centos7-amd64
+gpgcheck = 1
+gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+EOF
+yum clean all
+yum makecache fast
 
 # ===== SSH setup =====
 SSH_PORT=2222
@@ -95,7 +104,7 @@ sshd -t && systemctl restart sshd
 firewall-cmd --permanent --add-port=$SSH_PORT/tcp
 firewall-cmd --reload
 
-# ===== SELinux & DNS =====
+# ===== SELinux disable & DNS =====
 cp /etc/selinux/config /etc/selinux/config.bak
 setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
@@ -113,21 +122,10 @@ systemctl stop mariadb 2>/dev/null || true
 yum remove -y MariaDB* mariadb* || true
 rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
 
-# ===== MariaDB repo 10.5 =====
-cat > /etc/yum.repos.d/MariaDB.repo <<EOF
-[mariadb]
-name = MariaDB
-baseurl = https://archive.mariadb.org/mariadb-10.5/yum/centos7-amd64
-gpgcheck = 0
-EOF
-yum clean all
-yum makecache
+# ===== MariaDB install =====
 yum install -y MariaDB-server MariaDB-client
-
-# ===== Nginx =====
-yum install -y nginx
-systemctl enable nginx php-fpm mariadb
-systemctl start nginx php-fpm mariadb
+systemctl enable mariadb
+systemctl start mariadb
 
 # ===== MariaDB setup =====
 mysql -u root <<EOF
@@ -139,6 +137,11 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO '${PANEL_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
+# ===== Nginx =====
+yum install -y nginx
+systemctl enable nginx php-fpm
+systemctl start nginx php-fpm mariadb
+
 # ===== phpMyAdmin =====
 mkdir -p /var/www/html/phpmyadmin
 wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
@@ -148,10 +151,9 @@ rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.z
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# ===== TinyFileManager + admin random =====
+# ===== TinyFileManager =====
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
-
 TINYFM_CONFIG="/var/www/html/filemanager/tfm-config.php"
 cat > $TINYFM_CONFIG <<EOF
 <?php
@@ -161,7 +163,6 @@ cat > $TINYFM_CONFIG <<EOF
 \$upload_dir = __DIR__;
 ?>
 EOF
-
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
@@ -169,90 +170,4 @@ chmod -R 755 /var/www/html/filemanager
 NGINX_CONF="/etc/nginx/conf.d/panel.conf"
 [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
 
-if ss -tuln | awk '{print $4}' | grep -Eq "(:|\\.)${ADMIN_PORT}$"; then
-    echo "❌ Port ${ADMIN_PORT} đang bị chiếm, đổi port khác!"
-    exit 1
-fi
-
-# detect php-fpm socket
-PHP_FPM_SOCK="/var/run/php-fpm/www.sock"
-if [ ! -S "$PHP_FPM_SOCK" ]; then
-    PHP_FPM_SOCK="/run/php-fpm/www.sock"
-fi
-
-cat > "$NGINX_CONF" <<EOF
-server {
-    listen ${ADMIN_PORT};
-    server_name ${ADMIN_DOMAIN:-_};
-    root /var/www/html;
-    index index.php index.html index.htm;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
-    location ~ \.php\$ {
-        include fastcgi_params;
-        fastcgi_pass unix:${PHP_FPM_SOCK};
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-    }
-}
-EOF
-
-rm -f /var/run/nginx.pid
-chown -R nginx:nginx /var/www/html
-chmod -R 755 /var/www/html
-nginx -t && systemctl restart nginx
-
-firewall-cmd --permanent --add-port=80/tcp
-firewall-cmd --permanent --add-port=443/tcp
-firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
-firewall-cmd --reload
-
-# ===== Auto SSL Let’s Encrypt =====
-if [ -n "$ADMIN_DOMAIN" ]; then
-  echo "🔐 Cài Let’s Encrypt SSL cho ${ADMIN_DOMAIN}..."
-  yum install -y epel-release
-  yum install -y certbot python3-certbot-nginx
-
-  certbot --nginx -d $ADMIN_DOMAIN --non-interactive --agree-tos -m admin@$ADMIN_DOMAIN --redirect
-  systemctl reload nginx
-  echo "✅ SSL đã cài xong, tự động redirect HTTP → HTTPS"
-else
-  echo "⚠️ Không nhập domain, bỏ qua SSL Let’s Encrypt"
-fi
-
-# ===== Backup config + log credentials =====
-BACKUP_DIR="/root/panel_install_backup"
-mkdir -p "$BACKUP_DIR"
-cp -f /etc/nginx/conf.d/panel.conf "$BACKUP_DIR/panel.conf.bak"
-cp -f /etc/php-fpm.d/www.conf "$BACKUP_DIR/www.conf.bak" 2>/dev/null || true
-cp -f /etc/my.cnf "$BACKUP_DIR/my.cnf.bak" 2>/dev/null || true
-cp -f /etc/selinux/config "$BACKUP_DIR/selinux_config.bak"
-
-CREDENTIALS_FILE="$BACKUP_DIR/panel_credentials.txt"
-cat > "$CREDENTIALS_FILE" <<EOF
-===== PANEL SERVER CREDENTIALS =====
-Domain/IP quản trị: ${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
-Port SSH: $SSH_PORT
-MySQL root password: ${MYSQL_ROOT_PASS}
-Database panel: ${PANEL_DB}
-DB user: ${PANEL_USER}
-DB password: ${PANEL_PASS}
-Web admin user: admin
-Web admin password: $WEB_ADMIN_PASS
-Truy cập phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
-Truy cập FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
-EOF
-chmod 600 "$CREDENTIALS_FILE"
-echo "🔐 Tất cả thông tin quan trọng đã được backup vào: $CREDENTIALS_FILE (chỉ root đọc được)"
-
-# ===== Hoàn tất & chờ reboot =====
-echo ""
-echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7 Safe V2 + HTTPS + admin random!"
-echo "Thông tin chi tiết đã backup vào $CREDENTIALS_FILE"
-echo ""
-
-read -p "Nhấn Enter để reboot server hoặc Ctrl+C để hủy..." dummy
-reboot
+if ss -tuln | awk '{print $4}' | grep -Eq "(:|\\.)${
