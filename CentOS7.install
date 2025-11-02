@@ -1,61 +1,83 @@
 #!/bin/bash
 ###############################################################
-# 🔥 Pannel Server CentOS 7 Installer + phpMyAdmin + FileManager
-# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
-# 👑 Copyright (C) 2025 Việt_Anh_Code™
+# Pannel Server v2 Pro+ (FINAL) - CentOS 7
+# - Nginx + PHP 8.0 + MariaDB 10.5
+# - phpMyAdmin + TinyFileManager
+# - Dashboard (dark neon) + Server info + Copyright
+# - Basic Auth: root / Conmemi01@
+# - Auto-SSL (Let's Encrypt) IF domain points to server
+# - Daily DB backup @ 00:00 -> /root/db_backups/
+# RUN AS ROOT
 ###############################################################
 
-set -e
+set -euo pipefail
 
-echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
-echo "---------------------LOL-----------------------------"
+echo "🚀 Pannel Server v2 Pro+ (FINAL) - start"
 
-if [ $(id -u) != "0" ]; then
-  echo "❌ Cần chạy bằng quyền root!"
+# ---------- INPUT ----------
+read -p "Nhập domain quản trị (bỏ trống nếu trỏ sau): " ADMIN_DOMAIN
+read -p "Nhập port quản trị (VD: 2025): " ADMIN_PORT
+read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
+
+# ---------- CREDENTIALS (fixed per request) ----------
+BASIC_AUTH_USER="root"
+BASIC_AUTH_PASS="Conmemi01@"
+MYSQL_ROOT_PASS="Conmemi01@"
+
+# ---------- PATHS ----------
+HTPASS_FILE="/etc/nginx/.htpasswd_panel"
+PANEL_ROOT="/var/www/html"
+DASHBOARD_PHP="${PANEL_ROOT}/index.php"
+PHPMYADMIN_DIR="${PANEL_ROOT}/phpmyadmin"
+FILEMAN_DIR="${PANEL_ROOT}/filemanager"
+NGINX_CONF="/etc/nginx/conf.d/panel.conf"
+NGINX_SSL_CONF="/etc/nginx/conf.d/panel_ssl.conf"
+BACKUP_SCRIPT="/usr/local/bin/panel_db_backup.sh"
+CRON_FILE="/etc/cron.d/panel_db_backup"
+
+# ---------- CHECK ROOT ----------
+if [ "$(id -u)" -ne 0 ]; then
+  echo "❌ Vui lòng chạy script với quyền root!"
   exit 1
 fi
 
-# Nhập domain & port quản trị
-read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
-read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
-read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
+echo "🧰 Bắt đầu cấu hình hệ thống..."
+sleep 1
 
-# Firewalld
-systemctl start firewalld
-systemctl enable firewalld
+# ---------- SSH ----------
+sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config || true
+systemctl restart sshd || true
 
-# Cập nhật & cài gói cơ bản
+# ---------- Base packages ----------
+yum install -y epel-release yum-utils wget curl unzip nano httpd-tools || true
 yum update -y
-yum install -y wget nano curl epel-release yum-utils firewalld unzip
 
-# SSH config
-sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
-systemctl restart sshd
+# ---------- Firewall ----------
+yum install -y firewalld || true
+systemctl enable --now firewalld
 firewall-cmd --permanent --add-port=2222/tcp
 
-# Disable SELinux
+# ---------- DNS safe ----------
+echo "nameserver 8.8.8.8" > /etc/resolv.conf
+
+# ---------- Disable SELinux persistently ----------
 chattr -i /etc/selinux/config 2>/dev/null || true
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config || true
 
-# DNS fix
-sed -i 's/nameserver/#nameserver/g' /etc/resolv.conf || true
-echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-
-# PHP repo & install
+# ---------- PHP 8.0 ----------
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
 yum-config-manager --enable remi-php80
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
 
-# Remove old MariaDB
+# ---------- MariaDB 10.5 ----------
 systemctl stop mariadb 2>/dev/null || true
-yum remove -y MariaDB* mariadb* || true
-rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
+yum remove -y MariaDB* mariadb* 2>/dev/null || true
+rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo || true
 
-# MariaDB repo
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
-baseurl = https://archive.mariadb.org/mariadb-10.5/yum/centos7-amd64
+baseurl = http://yum.mariadb.org/10.5/centos7-amd64
 gpgcheck = 0
 EOF
 
@@ -63,83 +85,365 @@ yum clean all
 yum makecache
 yum install -y MariaDB-server MariaDB-client
 
-# Nginx
-yum install -y nginx
-systemctl enable nginx php-fpm mariadb
-systemctl start nginx php-fpm mariadb
+systemctl enable --now mariadb
 
-# MariaDB root password & create panel DB
+# secure mysql root and create panel db
 mysql -u root <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
+ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
 CREATE DATABASE IF NOT EXISTS ${PANEL_DB};
-GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost';
+GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
 EOF
 
-# phpMyAdmin
-mkdir -p /var/www/html/phpmyadmin
-wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
-unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
-mv /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages/* /var/www/html/phpmyadmin/
-rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.zip
-chown -R nginx:nginx /var/www/html/phpmyadmin
-chmod -R 755 /var/www/html/phpmyadmin
+# ---------- Nginx + PHP-FPM ----------
+yum install -y nginx
+systemctl enable nginx php-fpm
+systemctl start php-fpm
+systemctl start nginx
 
-# TinyFileManager
-mkdir -p /var/www/html/filemanager
-wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
-chown -R nginx:nginx /var/www/html/filemanager
-chmod -R 755 /var/www/html/filemanager
+# ---------- phpMyAdmin ----------
+mkdir -p ${PHPMYADMIN_DIR}
+wget -q -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
+unzip -q /tmp/phpmyadmin.zip -d /tmp/phpmyadmin_tmp
+rsync -a /tmp/phpmyadmin_tmp/phpMyAdmin-5.2.1-all-languages/ ${PHPMYADMIN_DIR}/
+rm -rf /tmp/phpmyadmin_tmp /tmp/phpmyadmin.zip
 
-# Nginx server block cho quản trị
-cat > /etc/nginx/conf.d/panel.conf <<EOF
+cat > ${PHPMYADMIN_DIR}/config.inc.php <<EOF
+<?php
+\$cfg['blowfish_secret'] = '$(openssl rand -base64 32)';
+\$i = 0;
+\$i++;
+\$cfg['Servers'][\$i]['auth_type'] = 'cookie';
+?>
+EOF
+
+chown -R nginx:nginx ${PHPMYADMIN_DIR}
+chmod -R 755 ${PHPMYADMIN_DIR}
+
+# ---------- TinyFileManager ----------
+mkdir -p ${FILEMAN_DIR}
+wget -q -O ${FILEMAN_DIR}/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
+chown -R nginx:nginx ${FILEMAN_DIR}
+chmod -R 755 ${FILEMAN_DIR}
+
+# ---------- Basic Auth (htpasswd) ----------
+if command -v htpasswd >/dev/null 2>&1; then
+  printf "%s\n" "${BASIC_AUTH_PASS}" | htpasswd -ciB ${HTPASS_FILE} ${BASIC_AUTH_USER} >/dev/null 2>&1 || true
+else
+  echo "${BASIC_AUTH_USER}:$(openssl passwd -6 ${BASIC_AUTH_PASS})" > ${HTPASS_FILE}
+fi
+chmod 640 ${HTPASS_FILE}
+chown root:nginx ${HTPASS_FILE}
+
+# ---------- Dashboard (index.php) ----------
+mkdir -p ${PANEL_ROOT}
+cat > ${DASHBOARD_PHP} <<'PHP'
+<?php
+// Việt_Anh_Code™ Control Panel - Dashboard
+function run($cmd){ $o = @shell_exec($cmd); return trim($o); }
+$uptime = run('uptime -p 2>/dev/null') ?: run('cat /proc/uptime | awk \'{print int($1/3600) "h " int(($1%3600)/60) "m"}\'');
+$loadavg = run('cat /proc/loadavg 2>/dev/null | awk \'{print $1" "$2" "$3}\'');
+$meminfo = run('free -m | awk \'NR==2{printf "%s/%s MB",$3,$2 }\'');
+$cpu = run('grep -m1 \'cpu \' /proc/stat 2>/dev/null | awk \'{usage=($2+$4)*100/($2+$4+$5); printf "%.1f%%", usage}\'') ?: run('top -bn1 | grep "Cpu(s)" | awk \'{print $2+$4 "%"}\'');
+?>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Việt_Anh_Code™ Control Panel</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;600;800&display=swap');
+    :root{--bg:#071028;--card:#071827;--neon:#00e5ff;--accent:#2dd4bf;--muted:#93b1d4}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Segoe UI,Arial;background:linear-gradient(180deg,#020617 0%,var(--bg) 100%);color:#dfeffd;height:100vh;display:flex;align-items:center;justify-content:center}
+    .wrap{width:920px;max-width:95%;display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:20px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.6);border:1px solid rgba(13,52,72,0.25)}
+    .hero{padding:26px;border-radius:12px;background:linear-gradient(90deg, rgba(0,229,255,0.03), rgba(45,212,191,0.02));}
+    .logo{font-weight:800;font-size:20px;color:var(--neon);text-shadow:0 0 18px rgba(0,229,255,0.12)}
+    .tag{color:var(--muted);margin-top:6px;font-size:13px}
+    .btns{margin-top:20px;display:flex;gap:12px;flex-wrap:wrap}
+    .btn{padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:700;display:inline-flex;align-items:center;gap:10px}
+    .btn-primary{background:linear-gradient(90deg,var(--neon),var(--accent));color:#031022;box-shadow:0 8px 18px rgba(45,212,191,0.08)}
+    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
+    .right .stat{display:flex;flex-direction:column;gap:10px}
+    .stat-item{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;display:flex;justify-content:space-between;align-items:center}
+    .muted{color:var(--muted);font-size:13px}
+    footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
+    .copyright{margin-top:10px;text-align:center;color:#7fb0d9;font-size:12px}
+    #loader{position:fixed;inset:0;background:linear-gradient(180deg,rgba(2,6,23,0.9),rgba(2,6,23,0.95));display:flex;align-items:center;justify-content:center;z-index:9999;color:var(--neon);flex-direction:column}
+    .terminal{background:#001024;padding:18px;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.6);border:1px solid rgba(0,229,255,0.06);width:min(720px,92%)}
+    .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;background:linear-gradient(90deg,#ff5f56,#ffbd2e)}
+    .line{font-family:monospace;color:#9ff3ff;margin:6px 0}
+    @media(max-width:880px){.wrap{grid-template-columns:1fr}}
+  </style>
+  <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      const loader = document.getElementById('loader');
+      setTimeout(()=>{ loader.style.transition='opacity .5s'; loader.style.opacity=0; setTimeout(()=>loader.remove(),600); }, 1100);
+    });
+  </script>
+</head>
+<body>
+  <div id="loader">
+    <div class="terminal">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="dot"></div>
+        <div style="font-weight:700;color:var(--neon)">Initializing Control Panel...</div>
+      </div>
+      <div class="line">▸ Loading modules: nginx, php-fpm, mariadb</div>
+      <div class="line">▸ Authenticating basic auth</div>
+      <div class="line">▸ Preparing dashboard</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="card hero">
+      <div class="logo">Việt_Anh_Code™ Control Panel</div>
+      <div class="tag">Quản lý server • Phiên bản 1.0.0</div>
+
+      <div style="margin-top:18px;font-size:14px;color:var(--muted)">Quick Access</div>
+      <div class="btns">
+        <a class="btn btn-primary" href="/phpmyadmin" target="_blank">🧩 phpMyAdmin</a>
+        <a class="btn btn-ghost" href="/filemanager" target="_blank">📁 FileManager</a>
+      </div>
+
+      <div style="margin-top:18px;color:var(--muted);font-size:13px">
+        <strong>Note:</strong> Đăng nhập bằng credentials của hệ thống (Basic Auth).
+      </div>
+
+      <div class="copyright">
+        © 2025 Việt_Anh_Code™ | All Rights Reserved<br>
+        Developed by Việt_Anh_Code™ | Version 1.0.0
+      </div>
+    </div>
+
+    <div class="card right">
+      <div style="font-weight:700;color:var(--neon);margin-bottom:12px">Server Overview</div>
+      <div class="stat">
+        <div class="stat-item"><div><div class="muted">Uptime</div><div style="font-weight:700"><?php echo htmlspecialchars($uptime); ?></div></div><div></div></div>
+        <div class="stat-item"><div><div class="muted">CPU Usage</div><div style="font-weight:700"><?php echo htmlspecialchars($cpu ?: 'N/A'); ?></div></div><div></div></div>
+        <div class="stat-item"><div><div class="muted">Load Average</div><div style="font-weight:700"><?php echo htmlspecialchars($loadavg ?: 'N/A'); ?></div></div><div></div></div>
+        <div class="stat-item"><div><div class="muted">Memory (used/total)</div><div style="font-weight:700"><?php echo htmlspecialchars($meminfo ?: 'N/A'); ?></div></div><div></div></div>
+      </div>
+
+      <div style="margin-top:14px;color:var(--muted);font-size:13px">
+        <strong>Quick Ops:</strong>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <a class="btn btn-ghost" href="/phpmyadmin" target="_blank">Open phpMyAdmin</a>
+          <a class="btn btn-ghost" href="/filemanager" target="_blank">Open FileManager</a>
+        </div>
+      </div>
+
+      <footer style="margin-top:16px">Server IP: <?php echo htmlspecialchars(gethostbyname(gethostname())); ?> • Last refresh: <?php echo date('Y-m-d H:i:s'); ?></footer>
+    </div>
+  </div>
+</body>
+</html>
+PHP
+
+chown -R nginx:nginx ${PANEL_ROOT}
+chmod 644 ${DASHBOARD_PHP}
+
+# ---------- Nginx config (HTTP on ADMIN_PORT) ----------
+cat > ${NGINX_CONF} <<EOF
 server {
-    listen ${ADMIN_PORT};
-    server_name ${ADMIN_DOMAIN};
+    listen ${ADMIN_PORT} ;
+    server_name ${ADMIN_DOMAIN:-_};
 
-    root /var/www/html;
-    index index.php index.html index.htm;
+    root ${PANEL_ROOT};
+    index index.php index.html;
 
-    location / {
-        try_files \$uri \$uri/ =404;
+    location = / {
+        try_files /index.php /index.html =404;
     }
 
-    location ~ \.php\$ {
+    location /phpmyadmin {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
+    }
+
+    location /phpmyadmin/ {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
+    }
+
+    location /filemanager {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
+    }
+
+    location /filemanager/ {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
         include fastcgi_params;
         fastcgi_pass 127.0.0.1:9000;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
+
+    access_log /var/log/nginx/panel_access.log;
+    error_log /var/log/nginx/panel_error.log;
 }
 EOF
 
-# Ensure php-fpm chạy
-systemctl enable php-fpm
-systemctl restart php-fpm
+nginx -t && systemctl reload nginx || true
 
-# Test & reload Nginx
-nginx -t && systemctl restart nginx
-
-# Open ports
+# ---------- Firewall open ports ----------
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
 firewall-cmd --reload
 
-# Summary
-echo ""
-echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
-echo "Domain quản trị: ${ADMIN_DOMAIN}:${ADMIN_PORT}"
-echo "Port SSH: 2222"
-echo "MySQL root password: Conmemi01@"
-echo "Database panel: ${PANEL_DB}"
-echo "Database user: root"
-echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/phpmyadmin"
-echo "Truy cập FileManager: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/filemanager"
-echo "--------------------------------------------------"
-echo "👑 Việt_Anh_Code™ 2025"
+# ---------- Auto-SSL if domain points to server ----------
+if [ -n "${ADMIN_DOMAIN}" ]; then
+  echo "🔎 Kiểm tra domain ${ADMIN_DOMAIN}..."
+  DOMAIN_IP=$(getent hosts "${ADMIN_DOMAIN}" | awk '{print $1}' || true)
+  SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 
-echo "🕒 Server sẽ tự reboot sau 10 giây..."
-sleep 10
+  echo " - Domain lookup: ${DOMAIN_IP:-(no result)}"
+  echo " - Server IP: ${SERVER_IP:-(no result)}"
+
+  if [ -n "${DOMAIN_IP}" ] && [ -n "${SERVER_IP}" ] && [ "${DOMAIN_IP}" = "${SERVER_IP}" ]; then
+    echo "✅ Domain trỏ đúng IP. Bắt đầu cài certbot..."
+    yum install -y certbot python2-certbot-nginx || yum install -y certbot || true
+
+    if command -v certbot >/dev/null 2>&1; then
+      set +e
+      certbot certonly --webroot -w ${PANEL_ROOT} -d ${ADMIN_DOMAIN} --non-interactive --agree-tos -m admin@${ADMIN_DOMAIN}
+      CERT_STATUS=$?
+      set -e
+      if [ ${CERT_STATUS} -eq 0 ] || [ -d "/etc/letsencrypt/live/${ADMIN_DOMAIN}" ]; then
+        echo "🔐 Cert obtained. Configuring SSL on port ${ADMIN_PORT}..."
+        cat > /etc/nginx/conf.d/panel_redirect80.conf <<EOF
+server {
+    listen 80;
+    server_name ${ADMIN_DOMAIN};
+    return 301 https://\$host:${ADMIN_PORT}\$request_uri;
+}
+EOF
+
+        cat > ${NGINX_SSL_CONF} <<EOF
+server {
+    listen ${ADMIN_PORT} ssl;
+    server_name ${ADMIN_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
+    ssl_session_cache shared:SSL:10m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    root ${PANEL_ROOT};
+    index index.php index.html;
+
+    location = / {
+        try_files /index.php /index.html =404;
+    }
+
+    location /phpmyadmin {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
+    }
+
+    location /phpmyadmin/ {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
+    }
+
+    location /filemanager {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
+    }
+
+    location /filemanager/ {
+        auth_basic "Restricted";
+        auth_basic_user_file ${HTPASS_FILE};
+        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+
+    access_log /var/log/nginx/panel_ssl_access.log;
+    error_log /var/log/nginx/panel_ssl_error.log;
+}
+EOF
+
+        nginx -t && systemctl reload nginx || echo "⚠️ Nginx reload after SSL config failed — check manually."
+      else
+        echo "⚠️ Certbot không lấy được cert tự động. Bỏ qua auto-SSL."
+      fi
+    else
+      echo "⚠️ certbot không cài được. Bỏ qua auto-SSL."
+    fi
+  else
+    echo "ℹ️ Domain chưa trỏ hoặc IP không khớp -> bỏ qua auto-SSL. Sau khi trỏ domain, chạy:"
+    echo "    certbot certonly --webroot -w ${PANEL_ROOT} -d ${ADMIN_DOMAIN}"
+    echo "    hoặc certbot --nginx -d ${ADMIN_DOMAIN}"
+  fi
+else
+  echo "ℹ️ Không nhập domain -> bỏ qua auto-SSL."
+fi
+
+# ---------- Daily DB backup script ----------
+cat > ${BACKUP_SCRIPT} <<'BASH'
+#!/bin/bash
+set -e
+DB="'"${PANEL_DB}"'"
+OUT_DIR="/root/db_backups"
+TIMESTAMP=$(date +"%F_%H%M")
+mkdir -p "${OUT_DIR}"
+mysqldump -u root -p'"${MYSQL_ROOT_PASS}"' --databases "${DB}" --single-transaction --quick --lock-tables=false > "${OUT_DIR}/${DB}_${TIMESTAMP}.sql"
+# keep last 14 backups
+ls -1t "${OUT_DIR}" | sed -e '1,14d' | xargs -r -I{} rm -f "${OUT_DIR}/{}"
+BASH
+
+chmod +x ${BACKUP_SCRIPT}
+
+cat > ${CRON_FILE} <<EOF
+# Panel DB backup daily at 00:00
+0 0 * * * root ${BACKUP_SCRIPT} >> /var/log/panel_db_backup.log 2>&1
+EOF
+
+chmod 644 ${CRON_FILE}
+
+# ---------- Cleanup & final ----------
+yum clean all || true
+
+clear
+echo "🎉 Hoàn tất cài đặt Pannel Server v2 Pro+ (FINAL)"
+echo "----------------------------------------"
+if [ -n "${ADMIN_DOMAIN}" ]; then
+  echo "🌐 Domain: ${ADMIN_DOMAIN}"
+  echo "🔧 Truy cập quản trị: https://${ADMIN_DOMAIN}:${ADMIN_PORT}  (hoặc http://${ADMIN_DOMAIN}:${ADMIN_PORT} nếu chưa có cert)"
+else
+  echo "🔧 Truy cập quản trị: http://<SERVER_IP>:${ADMIN_PORT}"
+fi
+echo "🔐 Basic Auth (phpMyAdmin & FileManager): ${BASIC_AUTH_USER} / ${BASIC_AUTH_PASS}"
+echo "🔑 MySQL root: root / ${MYSQL_ROOT_PASS}"
+echo "🔁 Daily DB backup: /root/db_backups/ (cron: 00:00)"
+echo "🔒 SSH port: 2222"
+echo "----------------------------------------"
+echo "⚠️ Lưu ý quan trọng:"
+echo " - Nếu muốn dùng HTTPS, hãy chắc domain đã trỏ A record về IP server và port 80/443 mở."
+echo " - Nếu cần thay đổi basic-auth: dùng htpasswd để cập nhật ${HTPASS_FILE}."
+echo ""
+echo "Server sẽ reboot sau 8 giây để đảm bảo services khởi đúng."
+sleep 8
 reboot
