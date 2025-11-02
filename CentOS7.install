@@ -1,7 +1,7 @@
 #!/bin/bash
 ###############################################################
 # 🔥 Pannel Server CentOS 7 Installer + 403 Fix
-# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + Adminer + FileManager
+# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + Adminer + TinyFileManager
 # 👑 Copyright (C) 2025 Việt_Anh_Code™
 ###############################################################
 
@@ -10,7 +10,7 @@ set -e
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
 echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
 echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
-echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Script Bên Dưới "
+echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
 echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
 echo "--------------------------------------------------"
 
@@ -24,11 +24,11 @@ read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 read -p "Nhập tên database cho panel (VD: abcd): " PANEL_DB
 
-# Firewalld
+# Bật Firewalld
 systemctl start firewalld
 systemctl enable firewalld
 
-# Update & install basics
+# Cập nhật & cài các gói cơ bản
 yum update -y
 yum install -y wget nano curl epel-release yum-utils firewalld
 
@@ -55,7 +55,7 @@ systemctl stop mariadb 2>/dev/null || true
 yum remove -y MariaDB* mariadb* || true
 rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
 
-# MariaDB repo (no GPG)
+# MariaDB repo
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
@@ -87,9 +87,9 @@ wget -O /var/www/html/adminer/index.php https://www.adminer.org/latest.php
 chown -R nginx:nginx /var/www/html/adminer
 chmod -R 755 /var/www/html/adminer
 
-# FileManager (simple)
+# TinyFileManager (web file manager ổn định)
 mkdir -p /var/www/html/filemanager
-wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/alexantr/filemanager/master/index.php
+wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
@@ -97,22 +97,6 @@ chmod -R 755 /var/www/html/filemanager
 cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
-    server_name ${ADMIN_DOMAIN};
-    root /var/www/html/adminer;
-    index index.php;
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-    location ~ \.php\$ {
-        include fastcgi_params;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-    }
-}
-
-server {
-    listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN};
     root /var/www/html/adminer;
     index index.php;
