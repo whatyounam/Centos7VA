@@ -7,7 +7,7 @@
 
 set -e
 
-# ========== Cyberpunk Logo Nhấp Nháy ==========
+# ====== Cyberpunk Logo Nhấp Nháy ======
 logo() {
 echo -e "\e[5;38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
 echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ ___| \e[0m"
@@ -28,20 +28,19 @@ if [ $(id -u) != "0" ]; then
 fi
 
 # Nhập thông tin
-read -p "Nhập domain quản trị server (VD: domain.com) Chú Ý Là Domain Phải Trỏ Về Ip Máy Này Thì Mới Chạy Script Nha ( Nếu Chưa Thì Bỏ Trống ) : " ADMIN_DOMAIN
+read -p "Nhập domain quản trị server (VD: domain.com) hoặc để trống dùng IP: " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
 
-# Bật firewall
+# Firewall
 systemctl start firewalld
 systemctl enable firewalld
 
 # Cập nhật hệ thống & gói cơ bản
 yum update -y
-yum install -y wget nano curl epel-release yum-utils firewalld unzip
+yum install -y wget nano curl epel-release yum-utils firewalld unzip policycoreutils-python
 
-# 🛠️ Fix lỗi repo CentOS 7 (Vault Mirror)
-echo "🛠️ Đang fix lỗi repo CentOS 7 (Vault Mirror)..."
+# ===== Fix repo CentOS 7 Vault =====
 sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
@@ -65,33 +64,32 @@ EOF
 yum clean all
 yum makecache
 
-# SSH config an toàn
-echo "🔐 Cấu hình SSH an toàn..."
+# ===== SSH config =====
 cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
 grep -q "^Port 2222" /etc/ssh/sshd_config || echo "Port 2222" >> /etc/ssh/sshd_config
 sshd -t && systemctl restart sshd
 firewall-cmd --permanent --add-port=2222/tcp
 firewall-cmd --reload
 
-# Disable SELinux
-chattr -i /etc/selinux/config 2>/dev/null || true
+# ===== Disable SELinux tạm =====
+setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
 
-# DNS fix
+# ===== DNS fix =====
 sed -i 's/nameserver/#nameserver/g' /etc/resolv.conf || true
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
-# PHP repo & install
+# ===== PHP repo & install =====
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
 yum-config-manager --enable remi-php80
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
 
-# Remove old MariaDB
+# ===== Remove old MariaDB =====
 systemctl stop mariadb 2>/dev/null || true
 yum remove -y MariaDB* mariadb* || true
 rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
 
-# MariaDB repo
+# ===== MariaDB repo =====
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
@@ -102,12 +100,12 @@ yum clean all
 yum makecache
 yum install -y MariaDB-server MariaDB-client
 
-# Nginx
+# ===== Nginx =====
 yum install -y nginx
 systemctl enable nginx php-fpm mariadb
 systemctl start nginx php-fpm mariadb
 
-# MariaDB root password & create panel DB
+# ===== MariaDB root & create panel DB =====
 mysql -u root <<EOF
 SET PASSWORD FOR 'root'@'localhost' = PASSWORD('Conmemi01@');
 FLUSH PRIVILEGES;
@@ -116,7 +114,7 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY 'Conme
 FLUSH PRIVILEGES;
 EOF
 
-# phpMyAdmin
+# ===== phpMyAdmin =====
 mkdir -p /var/www/html/phpmyadmin
 wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
 unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
@@ -125,25 +123,26 @@ rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.z
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# TinyFileManager
+# ===== TinyFileManager =====
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# --- Nginx safe setup for Panel ---
+# ===== Nginx safe panel setup =====
 NGINX_CONF="/etc/nginx/conf.d/panel.conf"
 [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
 
+# Check port free
 if ss -tuln | grep -q ":${ADMIN_PORT} "; then
-    echo "❌ Port ${ADMIN_PORT} đã bị chiếm, vui lòng đổi port khác!"
+    echo "❌ Port ${ADMIN_PORT} đang bị chiếm, đổi port khác!"
     exit 1
 fi
 
 cat > "$NGINX_CONF" <<EOF
 server {
     listen ${ADMIN_PORT};
-    server_name ${ADMIN_DOMAIN};
+    server_name ${ADMIN_DOMAIN:-_};
 
     root /var/www/html;
     index index.php index.html index.htm;
@@ -161,23 +160,31 @@ server {
 }
 EOF
 
+# Xoá pid cũ
 rm -f /var/run/nginx.pid
+
+# Chown folder web
+chown -R nginx:nginx /var/www/html
+chmod -R 755 /var/www/html
+
+# Test & restart nginx
 nginx -t && systemctl restart nginx
 
+# Firewall
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
 firewall-cmd --reload
 
-# Thông tin hoàn tất
+# ===== Hoàn tất =====
 echo ""
 echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
-echo "Domain quản trị: ${ADMIN_DOMAIN}:${ADMIN_PORT}"
+echo "Domain/IP quản trị: ${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}"
 echo "Port SSH: 2222"
 echo "MySQL root password: Conmemi01@"
 echo "Database panel: ${PANEL_DB}"
-echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/phpmyadmin"
-echo "Truy cập FileManager: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/filemanager"
+echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin"
+echo "Truy cập FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager"
 echo "--------------------------------------------------"
 echo "👑 Việt_Anh_Code™ 2025 | CentOS V1 Cyberpunk Edition"
 
