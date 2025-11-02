@@ -7,7 +7,7 @@
 
 set -e
 
-# ===== Cyberpunk Logo =====
+# ===== Logo =====
 logo() {
 echo -e "\e[5;38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
 echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ ___| \e[0m"
@@ -22,30 +22,15 @@ logo
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
 echo "--------------------------------------------------"
 
-# ===== Kiểm tra root =====
+# ===== Root check =====
 if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
 
-# ===== Nhập domain + port với validate =====
-while true; do
-    read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
-    if [[ -z "$ADMIN_DOMAIN" ]] || [[ "$ADMIN_DOMAIN" =~ ^[a-zA-Z0-9.-]+$ ]]; then
-        break
-    else
-        echo "❌ Domain không hợp lệ, thử lại!"
-    fi
-done
-
-while true; do
-    read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
-    if [[ "$ADMIN_PORT" =~ ^[0-9]+$ ]] && [ "$ADMIN_PORT" -ge 1 ] && [ "$ADMIN_PORT" -le 65535 ]; then
-        break
-    else
-        echo "❌ Port không hợp lệ, thử lại!"
-    fi
-done
+# ===== Nhập domain + port =====
+read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
+read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 
 # ===== Random passwords =====
 PANEL_DB="panel_db"
@@ -57,11 +42,11 @@ MYSQL_ROOT_PASS=$(openssl rand -base64 16)
 # ===== Firewall =====
 systemctl enable --now firewalld
 
-# ===== Update & gói cơ bản =====
+# ===== Update & install base packages =====
 yum update -y
 yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python ca-certificates
 
-# ===== Fix repo CentOS Vault =====
+# ===== Fix CentOS Vault repo =====
 sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
@@ -69,11 +54,13 @@ name=CentOS-7 - Base - Archive
 baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
 gpgcheck=0
 enabled=1
+
 [updates]
 name=CentOS-7 - Updates - Archive
 baseurl=http://vault.centos.org/7.9.2009/updates/x86_64/
 gpgcheck=0
 enabled=1
+
 [extras]
 name=CentOS-7 - Extras - Archive
 baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
@@ -94,7 +81,7 @@ EOF
 yum clean all
 yum makecache fast
 
-# ===== SSH setup an toàn =====
+# ===== SSH safe setup =====
 SSH_PORT=2222
 BACKUP_SSH="/etc/ssh/sshd_config.bak_$(date +%F_%H%M)"
 cp /etc/ssh/sshd_config "$BACKUP_SSH"
@@ -239,3 +226,4 @@ chmod 600 /root/panel_install_backup/panel_credentials.txt
 
 # ===== Hoàn tất =====
 echo ""
+echo "🎉 Hoàn
