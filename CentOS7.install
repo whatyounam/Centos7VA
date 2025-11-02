@@ -1,0 +1,140 @@
+#!/bin/bash
+###############################################################
+# 🔥 Pannel Server CentOS 7 Installer + 403 Fix
+# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + Adminer + FileManager
+# 👑 Copyright (C) 2025 Việt_Anh_Code™
+###############################################################
+
+set -e
+
+echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
+echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
+echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
+echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
+echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
+echo "--------------------------------------------------"
+
+if [ $(id -u) != "0" ]; then
+  echo "❌ Cần chạy bằng quyền root!"
+  exit 1
+fi
+
+# Nhập domain & ports
+read -p "Nhập domain quản trị server ( VD :Domain.com ) : " ADMIN_DOMAIN
+read -p "Nhập port quản trị server ( VD : 2025 ) : " ADMIN_PORT
+read -p "Nhập tên database cho panel ( VD : abcd ) : " PANEL_DB
+
+# On FireWalld
+systemctl start firewalld
+systemctl enable firewalld
+
+# Update & install basics
+yum update -y
+yum install -y wget nano curl epel-release yum-utils firewalld
+
+# SSH config
+sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
+systemctl restart sshd
+firewall-cmd --permanent --add-port=2222/tcp
+
+# Disable SELinux
+chattr -i /etc/selinux/config 2>/dev/null || true
+sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
+
+# DNS fix
+sed -i 's/nameserver/#nameserver/g' /etc/resolv.conf || true
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+# PHP repo & install
+yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
+yum-config-manager --enable remi-php80
+yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
+
+# Remove old MariaDB
+systemctl stop mariadb 2>/dev/null || true
+yum remove -y MariaDB* mariadb* || true
+rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
+
+# MariaDB repo (no GPG)
+cat > /etc/yum.repos.d/MariaDB.repo <<EOF
+[mariadb]
+name = MariaDB
+baseurl = https://archive.mariadb.org/mariadb-10.5/yum/centos7-amd64
+gpgcheck = 0
+EOF
+
+yum clean all
+yum makecache
+yum install -y MariaDB-server MariaDB-client
+
+# Nginx
+yum install -y nginx
+systemctl enable nginx php-fpm mariadb
+systemctl start nginx php-fpm mariadb
+
+# MariaDB root password & create panel DB
+mysql -u root <<EOF
+ALTER USER 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
+FLUSH PRIVILEGES;
+CREATE DATABASE IF NOT EXISTS ${PANEL_DB};
+GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost';
+FLUSH PRIVILEGES;
+EOF
+
+# Adminer (web panel)
+mkdir -p /var/www/html/adminer
+wget -O /var/www/html/adminer/index.php https://www.adminer.org/latest.php
+chown -R nginx:nginx /var/www/html/adminer
+chmod -R 755 /var/www/html/adminer
+
+# FileManager (simple)
+mkdir -p /var/www/html/filemanager
+wget -O /var/www/html/filemanager/index.php https://github.com/vi7et/filemanager/raw/main/index.php
+chown -R nginx:nginx /var/www/html/filemanager
+chmod -R 755 /var/www/html/filemanager
+
+# Nginx server block
+cat > /etc/nginx/conf.d/panel.conf <<EOF
+server {
+    listen 80;
+    server_name ${ADMIN_DOMAIN};
+    root /var/www/html/adminer;
+    index index.php;
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+EOF
+
+# Fix 403: ensure php-fpm is running
+systemctl enable php-fpm
+systemctl restart php-fpm
+
+# Test & reload Nginx
+nginx -t && systemctl restart nginx
+
+# Open ports
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
+firewall-cmd --reload
+
+# Summary
+echo ""
+echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
+echo "Domain quản trị: ${ADMIN_DOMAIN}"
+echo "Port quản trị: ${ADMIN_PORT}"
+echo "Port SSH: 2222"
+echo "MySQL root password: Conmemi01@"
+echo "Database panel: ${PANEL_DB}"
+echo "Database user: root"
+echo "Truy cập Adminer: http://${ADMIN_DOMAIN}/"
+echo "Truy cập FileManager: http://${ADMIN_DOMAIN}/filemanager"
+echo "--------------------------------------------------"
+echo "👑 Việt_Anh_Code™ 2025"
