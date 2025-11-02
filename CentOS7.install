@@ -20,11 +20,11 @@ if [ $(id -u) != "0" ]; then
 fi
 
 # Nhập domain & ports
-read -p "Nhập domain quản trị server (VD: Domain.com) : " ADMIN_DOMAIN
-read -p "Nhập port quản trị server (VD: 2025) : " ADMIN_PORT
-read -p "Nhập tên database cho panel (VD: abcd) : " PANEL_DB
+read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
+read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
+read -p "Nhập tên database cho panel (VD: abcd): " PANEL_DB
 
-# On FireWalld
+# Firewalld
 systemctl start firewalld
 systemctl enable firewalld
 
@@ -97,6 +97,22 @@ chmod -R 755 /var/www/html/filemanager
 cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen 80;
+    server_name ${ADMIN_DOMAIN};
+    root /var/www/html/adminer;
+    index index.php;
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+
+server {
+    listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN};
     root /var/www/html/adminer;
     index index.php;
