@@ -10,7 +10,7 @@ set -e
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
 echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
 echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
-echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
+echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Script Bên Dưới "
 echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
 echo "--------------------------------------------------"
 
@@ -20,9 +20,9 @@ if [ $(id -u) != "0" ]; then
 fi
 
 # Nhập domain & ports
-read -p "Nhập domain quản trị server ( VD :Domain.com ) : " ADMIN_DOMAIN
-read -p "Nhập port quản trị server ( VD : 2025 ) : " ADMIN_PORT
-read -p "Nhập tên database cho panel ( VD : abcd ) : " PANEL_DB
+read -p "Nhập domain quản trị server (VD: Domain.com) : " ADMIN_DOMAIN
+read -p "Nhập port quản trị server (VD: 2025) : " ADMIN_PORT
+read -p "Nhập tên database cho panel (VD: abcd) : " PANEL_DB
 
 # On FireWalld
 systemctl start firewalld
@@ -89,7 +89,7 @@ chmod -R 755 /var/www/html/adminer
 
 # FileManager (simple)
 mkdir -p /var/www/html/filemanager
-wget -O /var/www/html/filemanager/index.php https://github.com/vi7et/filemanager/raw/main/index.php
+wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/alexantr/filemanager/master/index.php
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
