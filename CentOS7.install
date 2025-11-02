@@ -1,23 +1,13 @@
 #!/bin/bash
-#############################################################################
-# Pannel Server — Cyberpunk Deluxe Edition (CentOS 7)
-# - Nginx + PHP 8.0 + MariaDB 10.5 (robust repo) 
-# - phpMyAdmin + TinyFileManager
-# - Dashboard (cyberpunk style) + server info + footer copyright in web
-# - Basic Auth: root / Conmemi01@
-# - MySQL root: Conmemi01@
-# - Auto-SSL (Let's Encrypt) IF domain points to server public IP
-# - Daily DB backup @ 00:00 -> /root/db_backups/
-# - SSH port switched to 2222 safely (firewall opened before change)
-# - Copyright: "👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition"
-# RUN THIS AS ROOT
-#############################################################################
+###############################################################
+# 🔥 Pannel Server CentOS 7 Installer + phpMyAdmin + FileManager
+# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
+# 👑 Copyright (C) 2025 Việt_Anh_Code™
+###############################################################
 
-set -euo pipefail
+set -e
 
-# ---------------------------
-# ASCII Cyberpunk Logo (ANSI colors)
-# ---------------------------
+# ========== Cyberpunk Logo ==========
 logo() {
 cat <<'LOGO'
 [38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  [0m
@@ -26,401 +16,137 @@ cat <<'LOGO'
 [38;5;213m    |  __/| |\  || |___| |\  || |\  |  ___) | |_| | |_| | [0m
 [38;5;201m    |_|   |_| \_||_____|_| \_||_| \_| |____/ \___/ \____| [0m
 [0m
-[38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition[0m
 LOGO
 }
-
 clear
 logo
-echo
-echo "🔥 Starting Pannel Server - Cyberpunk Deluxe Edition"
-echo "ℹ️ Chạy script với quyền root. Nếu bạn đang dùng VPS, khuyên test trên VM trước."
-echo
+echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
+echo "--------------------------------------------------"
 
-# ---------------------------
-# Pre-check root
-# ---------------------------
-if [ "$(id -u)" -ne 0 ]; then
-  echo "❌ Vui lòng chạy script với quyền root!"
+# Kiểm tra quyền root
+if [ $(id -u) != "0" ]; then
+  echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
 
-# ---------------------------
-# Inputs
-# ---------------------------
-read -p "Nhập domain quản trị (bỏ trống nếu trỏ sau): " ADMIN_DOMAIN
-read -p "Nhập port quản trị (VD: 2025): " ADMIN_PORT
+# Nhập thông tin
+read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
+read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
 
-# Credentials fixed as requested
-BASIC_AUTH_USER="root"
-BASIC_AUTH_PASS="Conmemi01@"
-MYSQL_ROOT_PASS="Conmemi01@"
+# Bật firewall
+systemctl start firewalld
+systemctl enable firewalld
 
-# Paths
-HTPASS_FILE="/etc/nginx/.htpasswd_panel"
-PANEL_ROOT="/var/www/html"
-DASHBOARD_PHP="${PANEL_ROOT}/index.php"
-PHPMYADMIN_DIR="${PANEL_ROOT}/phpmyadmin"
-FILEMAN_DIR="${PANEL_ROOT}/filemanager"
-NGINX_CONF="/etc/nginx/conf.d/panel.conf"
-NGINX_SSL_CONF="/etc/nginx/conf.d/panel_ssl.conf"
-BACKUP_SCRIPT="/usr/local/bin/panel_db_backup.sh"
-CRON_FILE="/etc/cron.d/panel_db_backup"
+# Cập nhật hệ thống & gói cơ bản
+yum update -y
+yum install -y wget nano curl epel-release yum-utils firewalld unzip
 
-# ---------------------------
-# Basic system prep
-# ---------------------------
-echo "🧰 Cài gói cơ bản, update hệ thống..."
-yum install -y epel-release yum-utils wget curl unzip nano httpd-tools ca-certificates || true
-yum update -y || true
+# 🛠️ Fix lỗi repo CentOS 7 (Vault Mirror)
+echo "🛠️ Đang fix lỗi repo CentOS 7 (Vault Mirror)..."
+sed -i 's/enabled=1/enabled=0/g' /etc/yum.repos.d/CentOS-*.repo || true
 
-# enable and start firewalld early
-yum install -y firewalld || true
-systemctl enable --now firewalld
+cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
+[base]
+name=CentOS-7 - Base - Archive
+baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
+gpgcheck=0
+enabled=1
 
-# open SSH 2222 now so later switching safe
-firewall-cmd --permanent --add-port=2222/tcp || true
+[updates]
+name=CentOS-7 - Updates - Archive
+baseurl=http://vault.centos.org/7.9.2009/updates/x86_64/
+gpgcheck=0
+enabled=1
 
-# DNS safe
-echo "nameserver 8.8.8.8" > /etc/resolv.conf || true
+[extras]
+name=CentOS-7 - Extras - Archive
+baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
+gpgcheck=0
+enabled=1
+EOF
 
-# Disable SELinux persistently
+yum clean all
+yum makecache
+
+# SSH config
+sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config
+systemctl restart sshd
+firewall-cmd --permanent --add-port=2222/tcp
+
+# Disable SELinux
 chattr -i /etc/selinux/config 2>/dev/null || true
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config || true
+sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
 
-# ---------------------------
-# PHP 8.0 (Remi)
-# ---------------------------
-echo "🐘 Cài PHP 8.0..."
+# DNS fix
+sed -i 's/nameserver/#nameserver/g' /etc/resolv.conf || true
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
+# PHP repo & install
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
-yum-config-manager --enable remi-php80 || true
-yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl || true
-systemctl enable --now php-fpm || true
+yum-config-manager --enable remi-php80
+yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
 
-# ---------------------------
-# MariaDB 10.5 Robust Install
-# ---------------------------
-echo "🗄️ Cài MariaDB 10.5 (robust mode)..."
+# Remove old MariaDB
 systemctl stop mariadb 2>/dev/null || true
-yum remove -y MariaDB* mariadb* 2>/dev/null || true
-rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo || true
+yum remove -y MariaDB* mariadb* || true
+rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo
 
-update-ca-trust force-enable || true
-
-MIRRORS=(
-  "https://yum.mariadb.org/10.5/centos7-amd64"
-  "http://yum.mariadb.org/10.5/centos7-amd64"
-  "https://mirror.netweaver.uk/mariadb/yum/10.5/centos7-amd64"
-  "http://mirror.netweaver.uk/mariadb/yum/10.5/centos7-amd64"
-)
-
-SUCCESS=0
-for URL in "${MIRRORS[@]}"; do
-  echo "🔎 Thử mirror: ${URL}"
-  cat > /etc/yum.repos.d/MariaDB.repo <<EOF
+# MariaDB repo
+cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
-baseurl = ${URL}
+baseurl = https://archive.mariadb.org/mariadb-10.5/yum/centos7-amd64
 gpgcheck = 0
 EOF
-  yum clean all || true
-  yum makecache --disablerepo='*' --enablerepo='mariadb' || true
-  if yum --disablerepo='*' --enablerepo='mariadb' repoinfo >/dev/null 2>&1; then
-    if yum install -y MariaDB-server MariaDB-client; then
-      SUCCESS=1
-      break
-    fi
-  fi
-done
 
-if [ "${SUCCESS}" -ne 1 ]; then
-  echo "⚠️ Repo MariaDB unreachable — fallback sang gói distro mariadb..."
-  rm -f /etc/yum.repos.d/MariaDB.repo || true
-  yum clean all || true
-  yum makecache || true
-  yum install -y mariadb-server mariadb || true
-fi
+yum clean all
+yum makecache
+yum install -y MariaDB-server MariaDB-client
 
-systemctl enable --now mariadb || true
+# Nginx
+yum install -y nginx
+systemctl enable nginx php-fpm mariadb
+systemctl start nginx php-fpm mariadb
 
-# Secure root and create DB (fixed password per request)
-echo "🔐 Cấu hình MySQL root và tạo database ${PANEL_DB}..."
+# MariaDB root password & create panel DB
 mysql -u root <<EOF
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
+SET PASSWORD FOR 'root'@'localhost' = PASSWORD('Conmemi01@');
 FLUSH PRIVILEGES;
 CREATE DATABASE IF NOT EXISTS ${PANEL_DB};
-GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
+GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY 'Conmemi01@';
 FLUSH PRIVILEGES;
 EOF
 
-# ---------------------------
-# Nginx + PHP-FPM
-# ---------------------------
-echo "🌐 Cài Nginx và bắt đầu dịch vụ..."
-yum install -y nginx || true
-systemctl enable nginx || true
-systemctl start nginx || true
-
-# ---------------------------
 # phpMyAdmin
-# ---------------------------
-echo "📦 Cài phpMyAdmin..."
-mkdir -p "${PHPMYADMIN_DIR}"
-wget -q -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
-unzip -q /tmp/phpmyadmin.zip -d /tmp/phpmyadmin_tmp || true
-rsync -a /tmp/phpmyadmin_tmp/phpMyAdmin-5.2.1-all-languages/ "${PHPMYADMIN_DIR}/" || true
-rm -rf /tmp/phpmyadmin_tmp /tmp/phpmyadmin.zip || true
+mkdir -p /var/www/html/phpmyadmin
+wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
+unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
+mv /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages/* /var/www/html/phpmyadmin/
+rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.zip
+chown -R nginx:nginx /var/www/html/phpmyadmin
+chmod -R 755 /var/www/html/phpmyadmin
 
-cat > "${PHPMYADMIN_DIR}/config.inc.php" <<'PMA_CONF'
-<?php
-$cfg['blowfish_secret'] = 'REPLACE_WITH_RANDOM';
-$i = 0;
-$i++;
-$cfg['Servers'][$i]['auth_type'] = 'cookie';
-?>
-PMA_CONF
-
-# Replace blowfish with a random secret
-sed -i "s/REPLACE_WITH_RANDOM/$(openssl rand -base64 32)/" "${PHPMYADMIN_DIR}/config.inc.php" || true
-
-chown -R nginx:nginx "${PHPMYADMIN_DIR}"
-chmod -R 755 "${PHPMYADMIN_DIR}"
-
-# Inject footer into phpMyAdmin pages (safe append)
-FOOTER_HTML='<div style="text-align:center;margin-top:12px;color:#9fb0d7;font-size:13px">👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition — Powered by Pannel Server</div>'
-# Append to main index if exists, else to footer files
-if [ -f "${PHPMYADMIN_DIR}/index.php" ]; then
-  if ! grep -q 'Việt_Anh_Code' "${PHPMYADMIN_DIR}/index.php"; then
-    sed -i "/<\/body>/i echo '${FOOTER_HTML}';" "${PHPMYADMIN_DIR}/index.php" || true
-  fi
-fi
-
-# ---------------------------
 # TinyFileManager
-# ---------------------------
-echo "📁 Cài TinyFileManager..."
-mkdir -p "${FILEMAN_DIR}"
-wget -q -O "${FILEMAN_DIR}/index.php" https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php || true
-chown -R nginx:nginx "${FILEMAN_DIR}"
-chmod -R 755 "${FILEMAN_DIR}"
+mkdir -p /var/www/html/filemanager
+wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
+chown -R nginx:nginx /var/www/html/filemanager
+chmod -R 755 /var/www/html/filemanager
 
-# Inject footer into filemanager index
-if [ -f "${FILEMAN_DIR}/index.php" ]; then
-  if ! grep -q 'Việt_Anh_Code' "${FILEMAN_DIR}/index.php"; then
-    sed -i "/<\/html>/i <footer style='text-align:center;color:#9fb0d7;font-size:13px;margin-top:18px'>👑 Việt_Anh_Code™ 2025 | Cyberpunk Edition — Powered by Pannel Server</footer>" "${FILEMAN_DIR}/index.php" || true
-  fi
-fi
-
-# ---------------------------
-# Basic Auth (htpasswd)
-# ---------------------------
-echo "🔑 Tạo Basic Auth (root/Conmemi01@) cho phpMyAdmin & FileManager..."
-if command -v htpasswd >/dev/null 2>&1; then
-  printf "%s\n" "${BASIC_AUTH_PASS}" | htpasswd -ciB "${HTPASS_FILE}" "${BASIC_AUTH_USER}" >/dev/null 2>&1 || true
-else
-  echo "${BASIC_AUTH_USER}:$(openssl passwd -6 ${BASIC_AUTH_PASS})" > "${HTPASS_FILE}"
-fi
-chmod 640 "${HTPASS_FILE}"
-chown root:nginx "${HTPASS_FILE}"
-
-# ---------------------------
-# Dashboard (Cyberpunk index.php)
-# ---------------------------
-echo "🎨 Tạo Dashboard (cyberpunk style) tại ${DASHBOARD_PHP}..."
-mkdir -p "${PANEL_ROOT}"
-cat > "${DASHBOARD_PHP}" <<'PHP'
-<?php
-// Việt_Anh_Code™ Control Panel — Cyberpunk Edition
-function run($cmd){ $o = @shell_exec($cmd); return trim($o); }
-$uptime = run('uptime -p 2>/dev/null') ?: run('cat /proc/uptime | awk \'{print int($1/3600) "h " int(($1%3600)/60) "m"}\'');
-$loadavg = run('cat /proc/loadavg 2>/dev/null | awk \'{print $1" "$2" "$3}\'');
-$meminfo = run('free -m | awk \'NR==2{printf "%s/%s MB",$3,$2 }\'');
-$cpu = run('grep -m1 \'cpu \' /proc/stat 2>/dev/null | awk \'{usage=($2+$4)*100/($2+$4+$5); printf "%.1f%%", usage}\'') ?: run('top -bn1 | grep "Cpu(s)" | awk \'{print $2+$4 "%"}\'');
-?>
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Việt_Anh_Code™ Panel — Cyberpunk Edition</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
-    :root{
-      --bg:#020617;
-      --panel:#0b1220;
-      --neon-cyan:#00e5ff;
-      --neon-magenta:#d946ef;
-      --muted:#9fb0d7;
-    }
-    body{margin:0;background:linear-gradient(180deg,#030216 0%,#071028 100%);color:#dcefff;font-family:Orbitron,monospace;display:flex;align-items:center;justify-content:center;height:100vh}
-    .wrap{width:940px;max-width:95%;display:grid;grid-template-columns:1fr 360px;gap:22px}
-    .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:22px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,0.6);border:1px solid rgba(13,52,72,0.25)}
-    .hero{border-left:4px solid rgba(0,229,255,0.12);padding-left:18px}
-    .logo{font-size:20px;color:var(--neon-cyan);text-shadow:0 0 18px rgba(0,229,255,0.12)}
-    .tag{color:var(--muted);margin-top:6px;font-size:13px}
-    .btn{padding:12px 16px;border-radius:10px;text-decoration:none;font-weight:700;display:inline-flex;align-items:center;gap:10px}
-    .btn-prim{background:linear-gradient(90deg,var(--neon-cyan),var(--neon-magenta));color:#031022}
-    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted)}
-    .stat-item{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-    footer{margin-top:16px;color:var(--muted);font-size:13px;text-align:center}
-    @media(max-width:900px){.wrap{grid-template-columns:1fr}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card hero">
-      <div class="logo">Việt_Anh_Code™ — Cyberpunk Edition</div>
-      <div class="tag">Control Panel • Version 1.0.0</div>
-
-      <div style="margin-top:18px">
-        <a class="btn btn-prim" href="/phpmyadmin" target="_blank">🧩 phpMyAdmin</a>
-        <a class="btn btn-ghost" href="/filemanager" target="_blank">📁 FileManager</a>
-      </div>
-
-      <div style="margin-top:16px;color:#9fb0d7;font-size:13px">
-        <strong>Note:</strong> Đăng nhập bằng Basic Auth (root / Conmemi01@)
-      </div>
-
-      <div style="margin-top:18px;text-align:center;color:#7fb0d9;font-size:12px">
-        © 2025 Việt_Anh_Code™ | Cyberpunk Edition — Powered by Pannel Server
-      </div>
-    </div>
-
-    <div class="card">
-      <div style="font-weight:700;color:var(--neon-cyan);margin-bottom:12px">Server Overview</div>
-      <div class="stat-item"><div style="color:#9fb0d7">Uptime</div><div style="font-weight:700"><?php echo htmlspecialchars($uptime); ?></div></div>
-      <div class="stat-item"><div style="color:#9fb0d7">CPU</div><div style="font-weight:700"><?php echo htmlspecialchars($cpu ?: 'N/A'); ?></div></div>
-      <div class="stat-item"><div style="color:#9fb0d7">Load Avg</div><div style="font-weight:700"><?php echo htmlspecialchars($loadavg ?: 'N/A'); ?></div></div>
-      <div class="stat-item"><div style="color:#9fb0d7">Memory</div><div style="font-weight:700"><?php echo htmlspecialchars($meminfo ?: 'N/A'); ?></div></div>
-
-      <div style="margin-top:14px">
-        <a class="btn btn-ghost" href="/phpmyadmin" target="_blank">Open phpMyAdmin</a>
-        <a class="btn btn-ghost" href="/filemanager" target="_blank">Open FileManager</a>
-      </div>
-
-      <footer>Server IP: <?php echo htmlspecialchars(gethostbyname(gethostname())); ?> • Last refresh: <?php echo date('Y-m-d H:i:s'); ?></footer>
-    </div>
-  </div>
-</body>
-</html>
-PHP
-
-chown -R nginx:nginx "${PANEL_ROOT}"
-chmod 644 "${DASHBOARD_PHP}"
-
-# ---------------------------
-# Nginx config (listen on ADMIN_PORT)
-# ---------------------------
-echo "⚙️ Config Nginx trên port ${ADMIN_PORT}..."
-cat > "${NGINX_CONF}" <<EOF
+# Nginx server block cho quản trị
+cat > /etc/nginx/conf.d/panel.conf <<EOF
 server {
     listen ${ADMIN_PORT};
-    server_name ${ADMIN_DOMAIN:-_};
-
-    root ${PANEL_ROOT};
-    index index.php index.html;
-
-    location = / {
-        try_files /index.php /index.html =404;
-    }
-
-    location /phpmyadmin {
-        auth_basic "Restricted";
-        auth_basic_user_file ${HTPASS_FILE};
-        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
-    }
-
-    location /filemanager {
-        auth_basic "Restricted";
-        auth_basic_user_file ${HTPASS_FILE};
-        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
-        include fastcgi_params;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-    }
-
-    access_log /var/log/nginx/panel_access.log;
-    error_log /var/log/nginx/panel_error.log;
-}
-EOF
-
-nginx -t && systemctl reload nginx || true
-
-# ---------------------------
-# Firewall ports
-# ---------------------------
-firewall-cmd --permanent --add-port=80/tcp || true
-firewall-cmd --permanent --add-port=443/tcp || true
-firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp || true
-firewall-cmd --reload || true
-
-# ---------------------------
-# Auto-SSL (only if public IP & domain points)
-# ---------------------------
-echo "🔎 Kiểm tra môi trường để quyết auto-SSL..."
-SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-IS_PRIVATE_IP=0
-if [[ "${SERVER_IP}" =~ ^10\. ]] || [[ "${SERVER_IP}" =~ ^192\.168\. ]] || [[ "${SERVER_IP}" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
-  IS_PRIVATE_IP=1
-fi
-
-if [ -n "${ADMIN_DOMAIN}" ] && [ "${IS_PRIVATE_IP}" -eq 0 ]; then
-  echo "ℹ️ Server IP public: ${SERVER_IP}. Check domain ${ADMIN_DOMAIN}..."
-  DOMAIN_IP=$(getent hosts "${ADMIN_DOMAIN}" | awk '{print $1}' || true)
-  echo " - Domain lookup: ${DOMAIN_IP:-(no result)}"
-  if [ -n "${DOMAIN_IP}" ] && [ "${DOMAIN_IP}" = "${SERVER_IP}" ]; then
-    echo "✅ Domain trỏ đúng IP. Bắt đầu cài certbot..."
-    yum install -y certbot python2-certbot-nginx || yum install -y certbot || true
-    if command -v certbot >/dev/null 2>&1; then
-      set +e
-      certbot certonly --webroot -w "${PANEL_ROOT}" -d "${ADMIN_DOMAIN}" --non-interactive --agree-tos -m admin@"${ADMIN_DOMAIN}"
-      CERT_STATUS=$?
-      set -e
-      if [ ${CERT_STATUS} -eq 0 ] || [ -d "/etc/letsencrypt/live/${ADMIN_DOMAIN}" ]; then
-        echo "🔐 Cert obtained. Configure SSL on port ${ADMIN_PORT}..."
-        cat > /etc/nginx/conf.d/panel_redirect80.conf <<EOF
-server {
-    listen 80;
-    server_name ${ADMIN_DOMAIN};
-    return 301 https://\$host:${ADMIN_PORT}\$request_uri;
-}
-EOF
-        cat > "${NGINX_SSL_CONF}" <<EOF
-server {
-    listen ${ADMIN_PORT} ssl;
     server_name ${ADMIN_DOMAIN};
 
-    ssl_certificate /etc/letsencrypt/live/${ADMIN_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${ADMIN_DOMAIN}/privkey.pem;
-    ssl_session_cache shared:SSL:10m;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_prefer_server_ciphers on;
+    root /var/www/html;
+    index index.php index.html index.htm;
 
-    root ${PANEL_ROOT};
-    index index.php index.html;
-
-    location = / {
-        try_files /index.php /index.html =404;
+    location / {
+        try_files \$uri \$uri/ =404;
     }
 
-    location /phpmyadmin {
-        auth_basic "Restricted";
-        auth_basic_user_file ${HTPASS_FILE};
-        try_files \$uri \$uri/ /phpmyadmin/index.php?\$query_string;
-    }
-
-    location /filemanager {
-        auth_basic "Restricted";
-        auth_basic_user_file ${HTPASS_FILE};
-        try_files \$uri \$uri/ /filemanager/index.php?\$query_string;
-    }
-
-    location ~ \.php$ {
+    location ~ \.php\$ {
         include fastcgi_params;
         fastcgi_pass 127.0.0.1:9000;
         fastcgi_index index.php;
@@ -428,79 +154,32 @@ server {
     }
 }
 EOF
-        nginx -t && systemctl reload nginx || echo "⚠️ Nginx reload after SSL config failed — check manually."
-      else
-        echo "⚠️ Certbot không lấy được cert tự động. Bỏ qua auto-SSL."
-      fi
-    else
-      echo "⚠️ certbot không cài được. Bỏ qua auto-SSL."
-    fi
-  else
-    echo "ℹ️ Domain chưa trỏ về IP server -> skip auto-SSL."
-  fi
-else
-  if [ -n "${ADMIN_DOMAIN}" ]; then
-    echo "ℹ️ Server ở môi trường private (${SERVER_IP}) -> skip auto-SSL."
-  else
-    echo "ℹ️ Không có domain -> skip auto-SSL."
-  fi
-fi
 
-# ---------------------------
-# Daily DB backup script (00:00)
-# ---------------------------
-cat > "${BACKUP_SCRIPT}" <<BASH
-#!/bin/bash
-set -e
-DB="${PANEL_DB}"
-OUT_DIR="/root/db_backups"
-TIMESTAMP=\$(date +"%F_%H%M")
-mkdir -p "\${OUT_DIR}"
-mysqldump -u root -p'${MYSQL_ROOT_PASS}' --databases "\${DB}" --single-transaction --quick --lock-tables=false > "\${OUT_DIR}/\${DB}_\${TIMESTAMP}.sql"
-# keep last 14 backups
-ls -1t "\${OUT_DIR}" | sed -e '1,14d' | xargs -r -I{} rm -f "\${OUT_DIR}/{}"
-BASH
+# Enable php-fpm
+systemctl enable php-fpm
+systemctl restart php-fpm
 
-chmod +x "${BACKUP_SCRIPT}"
-cat > "${CRON_FILE}" <<EOF
-# Panel DB backup daily at 00:00
-0 0 * * * root ${BACKUP_SCRIPT} >> /var/log/panel_db_backup.log 2>&1
-EOF
-chmod 644 "${CRON_FILE}"
+# Test & reload Nginx
+nginx -t && systemctl restart nginx
 
-# ---------------------------
-# Safely change SSH port (firewall already opened 2222)
-# ---------------------------
-echo "🔒 Đổi SSH port sang 2222 (safe mode)..."
-sed -i -E 's/^#?Port .*/Port 2222/' /etc/ssh/sshd_config || true
-firewall-cmd --add-port=2222/tcp || true
-firewall-cmd --reload || true
-systemctl restart sshd || true
-echo "✔️ SSH will listen on port 2222. Test: ssh root@<IP> -p 2222"
+# Open ports
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
+firewall-cmd --reload
 
-# ---------------------------
-# Cleanup & final info
-# ---------------------------
-yum clean all || true
+# Thông tin hoàn tất
+echo ""
+echo "🎉 Hoàn Tất Cài Đặt Pannel Server CentOS 7!"
+echo "Domain quản trị: ${ADMIN_DOMAIN}:${ADMIN_PORT}"
+echo "Port SSH: 2222"
+echo "MySQL root password: Conmemi01@"
+echo "Database panel: ${PANEL_DB}"
+echo "Truy cập phpMyAdmin: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/phpmyadmin"
+echo "Truy cập FileManager: http://${ADMIN_DOMAIN}:${ADMIN_PORT}/filemanager"
+echo "--------------------------------------------------"
+echo "👑 Việt_Anh_Code™ 2025 | CentOS V1 Cyberpunk Edition"
 
-clear
-logo
-echo
-echo "🎉 Hoàn tất cài đặt Pannel Server — Cyberpunk Deluxe Edition"
-echo "----------------------------------------"
-if [ -n "${ADMIN_DOMAIN}" ]; then
-  echo "🌐 Domain: ${ADMIN_DOMAIN}"
-  echo "🔧 Truy cập quản trị: https://${ADMIN_DOMAIN}:${ADMIN_PORT}  (hoặc http://${ADMIN_DOMAIN}:${ADMIN_PORT} nếu chưa có cert)"
-else
-  echo "🔧 Truy cập quản trị: http://<SERVER_IP>:${ADMIN_PORT}"
-fi
-echo "🔐 Basic Auth (phpMyAdmin & FileManager): ${BASIC_AUTH_USER} / ${BASIC_AUTH_PASS}"
-echo "🔑 MySQL root: root / ${MYSQL_ROOT_PASS}"
-echo "🔁 Daily DB backup: /root/db_backups/ (cron: 00:00)"
-echo "🔒 SSH port: 2222"
-echo "----------------------------------------"
-echo "© 2025 Việt_Anh_Code™ | Cyberpunk Edition — All Rights Reserved"
-echo
-echo "⏳ Server sẽ tự reboot sau 10 giây để apply mọi thứ..."
+echo "🕒 Server sẽ tự reboot sau 10 giây..."
 sleep 10
 reboot
