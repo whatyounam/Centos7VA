@@ -5,14 +5,17 @@
 # - phpMyAdmin + TinyFileManager
 # - Dashboard (dark neon) + Server info + Copyright
 # - Basic Auth: root / Conmemi01@
+# - MySQL root: Conmemi01@
 # - Auto-SSL (Let's Encrypt) IF domain points to server
 # - Daily DB backup @ 00:00 -> /root/db_backups/
+# - SSH port switched to 2222 (safe: open firewall first)
 # RUN AS ROOT
 ###############################################################
 
 set -euo pipefail
 
 echo "🚀 Pannel Server v2 Pro+ (FINAL) - start"
+echo "⚠️ Chạy script này với quyền root. Kiểm tra kỹ trước khi deploy lên production."
 
 # ---------- INPUT ----------
 read -p "Nhập domain quản trị (bỏ trống nếu trỏ sau): " ADMIN_DOMAIN
@@ -41,35 +44,41 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-echo "🧰 Bắt đầu cấu hình hệ thống..."
+# ---------- Basic safety reminders ----------
+echo "ℹ️ Nếu server đang chạy dịch vụ khác (cPanel/Plesk), script này có thể xung đột."
 sleep 1
 
-# ---------- SSH ----------
-sed -i 's/#Port 22/Port 2222/' /etc/ssh/sshd_config || true
-systemctl restart sshd || true
-
-# ---------- Base packages ----------
+# ---------- STEP 1: Base system ----------
+echo "🧰 Cài package cơ bản..."
 yum install -y epel-release yum-utils wget curl unzip nano httpd-tools || true
 yum update -y
 
-# ---------- Firewall ----------
+# ---------- Firewall initial ----------
+echo "🔐 Cài và bật firewalld..."
 yum install -y firewalld || true
 systemctl enable --now firewalld
-firewall-cmd --permanent --add-port=2222/tcp
+
+# We will open ports as needed; open ssh 2222 pre-emptively to avoid being locked out later
+firewall-cmd --permanent --add-port=2222/tcp || true
 
 # ---------- DNS safe ----------
-echo "nameserver 8.8.8.8" > /etc/resolv.conf
+echo "nameserver 8.8.8.8" > /etc/resolv.conf || true
 
 # ---------- Disable SELinux persistently ----------
 chattr -i /etc/selinux/config 2>/dev/null || true
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config || true
 
 # ---------- PHP 8.0 ----------
+echo "🐘 Cài PHP 8.0..."
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm || true
 yum-config-manager --enable remi-php80
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
 
+# ensure php-fpm enabled
+systemctl enable --now php-fpm || true
+
 # ---------- MariaDB 10.5 ----------
+echo "🗄️ Cài MariaDB 10.5..."
 systemctl stop mariadb 2>/dev/null || true
 yum remove -y MariaDB* mariadb* 2>/dev/null || true
 rm -rf /var/lib/mysql /etc/my.cnf* /etc/yum.repos.d/MariaDB.repo || true
@@ -81,13 +90,14 @@ baseurl = http://yum.mariadb.org/10.5/centos7-amd64
 gpgcheck = 0
 EOF
 
-yum clean all
-yum makecache
+yum clean all || true
+yum makecache || true
 yum install -y MariaDB-server MariaDB-client
 
-systemctl enable --now mariadb
+systemctl enable --now mariadb || true
 
-# secure mysql root and create panel db
+# Secure MySQL root and create panel DB
+echo "🔐 Cấu hình MySQL root và tạo database..."
 mysql -u root <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
@@ -96,18 +106,19 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO 'root'@'localhost' IDENTIFIED BY '${MYS
 FLUSH PRIVILEGES;
 EOF
 
-# ---------- Nginx + PHP-FPM ----------
+# ---------- Nginx ----------
+echo "🌐 Cài Nginx..."
 yum install -y nginx
-systemctl enable nginx php-fpm
-systemctl start php-fpm
-systemctl start nginx
+systemctl enable nginx
+systemctl start nginx || true
 
 # ---------- phpMyAdmin ----------
+echo "📦 Cài phpMyAdmin..."
 mkdir -p ${PHPMYADMIN_DIR}
 wget -q -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
 unzip -q /tmp/phpmyadmin.zip -d /tmp/phpmyadmin_tmp
 rsync -a /tmp/phpmyadmin_tmp/phpMyAdmin-5.2.1-all-languages/ ${PHPMYADMIN_DIR}/
-rm -rf /tmp/phpmyadmin_tmp /tmp/phpmyadmin.zip
+rm -rf /tmp/phpmyadmin_tmp /tmp/phpmyadmin.zip || true
 
 cat > ${PHPMYADMIN_DIR}/config.inc.php <<EOF
 <?php
@@ -122,12 +133,14 @@ chown -R nginx:nginx ${PHPMYADMIN_DIR}
 chmod -R 755 ${PHPMYADMIN_DIR}
 
 # ---------- TinyFileManager ----------
+echo "📁 Cài TinyFileManager..."
 mkdir -p ${FILEMAN_DIR}
 wget -q -O ${FILEMAN_DIR}/index.php https://raw.githubusercontent.com/prasathmani/tinyfilemanager/master/tinyfilemanager.php
 chown -R nginx:nginx ${FILEMAN_DIR}
 chmod -R 755 ${FILEMAN_DIR}
 
-# ---------- Basic Auth (htpasswd) ----------
+# ---------- Basic Auth ----------
+echo "🔑 Tạo Basic Auth cho phpMyAdmin & FileManager..."
 if command -v htpasswd >/dev/null 2>&1; then
   printf "%s\n" "${BASIC_AUTH_PASS}" | htpasswd -ciB ${HTPASS_FILE} ${BASIC_AUTH_USER} >/dev/null 2>&1 || true
 else
@@ -137,6 +150,7 @@ chmod 640 ${HTPASS_FILE}
 chown root:nginx ${HTPASS_FILE}
 
 # ---------- Dashboard (index.php) ----------
+echo "🎨 Tạo Dashboard (index.php) with copyright..."
 mkdir -p ${PANEL_ROOT}
 cat > ${DASHBOARD_PHP} <<'PHP'
 <?php
@@ -155,7 +169,7 @@ $cpu = run('grep -m1 \'cpu \' /proc/stat 2>/dev/null | awk \'{usage=($2+$4)*100/
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;600;800&display=swap');
-    :root{--bg:#071028;--card:#071827;--neon:#00e5ff;--accent:#2dd4bf;--muted:#93b1d4}
+    :root{--bg:#071028;--neon:#00e5ff;--accent:#2dd4bf;--muted:#93b1d4}
     *{box-sizing:border-box}
     body{margin:0;font-family:Inter,system-ui,Segoe UI,Arial;background:linear-gradient(180deg,#020617 0%,var(--bg) 100%);color:#dfeffd;height:100vh;display:flex;align-items:center;justify-content:center}
     .wrap{width:920px;max-width:95%;display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start}
@@ -170,8 +184,6 @@ $cpu = run('grep -m1 \'cpu \' /proc/stat 2>/dev/null | awk \'{usage=($2+$4)*100/
     .right .stat{display:flex;flex-direction:column;gap:10px}
     .stat-item{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;display:flex;justify-content:space-between;align-items:center}
     .muted{color:var(--muted);font-size:13px}
-    footer{margin-top:18px;color:var(--muted);font-size:13px;text-align:center}
-    .copyright{margin-top:10px;text-align:center;color:#7fb0d9;font-size:12px}
     #loader{position:fixed;inset:0;background:linear-gradient(180deg,rgba(2,6,23,0.9),rgba(2,6,23,0.95));display:flex;align-items:center;justify-content:center;z-index:9999;color:var(--neon);flex-direction:column}
     .terminal{background:#001024;padding:18px;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,0.6);border:1px solid rgba(0,229,255,0.06);width:min(720px,92%)}
     .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;background:linear-gradient(90deg,#ff5f56,#ffbd2e)}
@@ -213,7 +225,7 @@ $cpu = run('grep -m1 \'cpu \' /proc/stat 2>/dev/null | awk \'{usage=($2+$4)*100/
         <strong>Note:</strong> Đăng nhập bằng credentials của hệ thống (Basic Auth).
       </div>
 
-      <div class="copyright">
+      <div style="margin-top:10px;text-align:center;color:#7fb0d9;font-size:12px">
         © 2025 Việt_Anh_Code™ | All Rights Reserved<br>
         Developed by Việt_Anh_Code™ | Version 1.0.0
       </div>
@@ -298,24 +310,26 @@ EOF
 nginx -t && systemctl reload nginx || true
 
 # ---------- Firewall open ports ----------
-firewall-cmd --permanent --add-port=80/tcp
-firewall-cmd --permanent --add-port=443/tcp
-firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
-firewall-cmd --reload
+firewall-cmd --permanent --add-port=80/tcp || true
+firewall-cmd --permanent --add-port=443/tcp || true
+firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp || true
+firewall-cmd --reload || true
 
-# ---------- Auto-SSL if domain points to server ----------
-if [ -n "${ADMIN_DOMAIN}" ]; then
-  echo "🔎 Kiểm tra domain ${ADMIN_DOMAIN}..."
+# ---------- Auto-SSL if domain points to server (public IP detection) ----------
+echo "🔎 Kiểm tra môi trường IP..."
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+IS_PRIVATE_IP=0
+if [[ "${SERVER_IP}" =~ ^10\. ]] || [[ "${SERVER_IP}" =~ ^192\.168\. ]] || [[ "${SERVER_IP}" =~ ^172\.(1[6-9]|2[0-9]|3[0-1])\. ]]; then
+  IS_PRIVATE_IP=1
+fi
+
+if [ -n "${ADMIN_DOMAIN}" ] && [ "${IS_PRIVATE_IP}" -eq 0 ]; then
+  echo "ℹ️ Server IP công khai: ${SERVER_IP}. Kiểm tra domain ${ADMIN_DOMAIN} trỏ về không..."
   DOMAIN_IP=$(getent hosts "${ADMIN_DOMAIN}" | awk '{print $1}' || true)
-  SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
-
   echo " - Domain lookup: ${DOMAIN_IP:-(no result)}"
-  echo " - Server IP: ${SERVER_IP:-(no result)}"
-
-  if [ -n "${DOMAIN_IP}" ] && [ -n "${SERVER_IP}" ] && [ "${DOMAIN_IP}" = "${SERVER_IP}" ]; then
+  if [ -n "${DOMAIN_IP}" ] && [ "${DOMAIN_IP}" = "${SERVER_IP}" ]; then
     echo "✅ Domain trỏ đúng IP. Bắt đầu cài certbot..."
     yum install -y certbot python2-certbot-nginx || yum install -y certbot || true
-
     if command -v certbot >/dev/null 2>&1; then
       set +e
       certbot certonly --webroot -w ${PANEL_ROOT} -d ${ADMIN_DOMAIN} --non-interactive --agree-tos -m admin@${ADMIN_DOMAIN}
@@ -330,7 +344,6 @@ server {
     return 301 https://\$host:${ADMIN_PORT}\$request_uri;
 }
 EOF
-
         cat > ${NGINX_SSL_CONF} <<EOF
 server {
     listen ${ADMIN_PORT} ssl;
@@ -384,24 +397,26 @@ server {
     error_log /var/log/nginx/panel_ssl_error.log;
 }
 EOF
-
         nginx -t && systemctl reload nginx || echo "⚠️ Nginx reload after SSL config failed — check manually."
       else
         echo "⚠️ Certbot không lấy được cert tự động. Bỏ qua auto-SSL."
       fi
     else
-      echo "⚠️ certbot không cài được. Bỏ qua auto-SSL."
+      echo "⚠️ certbot không có — bỏ qua auto-SSL."
     fi
   else
-    echo "ℹ️ Domain chưa trỏ hoặc IP không khớp -> bỏ qua auto-SSL. Sau khi trỏ domain, chạy:"
-    echo "    certbot certonly --webroot -w ${PANEL_ROOT} -d ${ADMIN_DOMAIN}"
-    echo "    hoặc certbot --nginx -d ${ADMIN_DOMAIN}"
+    echo "ℹ️ Domain chưa trỏ về IP server. Bỏ qua auto-SSL."
   fi
 else
-  echo "ℹ️ Không nhập domain -> bỏ qua auto-SSL."
+  if [ -n "${ADMIN_DOMAIN}" ]; then
+    echo "ℹ️ Server IP là private (${SERVER_IP}) -> skip auto-SSL (local/VM)."
+  else
+    echo "ℹ️ Không có domain -> skip auto-SSL."
+  fi
 fi
 
 # ---------- Daily DB backup script ----------
+echo "💾 Tạo script backup DB hàng ngày..."
 cat > ${BACKUP_SCRIPT} <<'BASH'
 #!/bin/bash
 set -e
@@ -423,15 +438,24 @@ EOF
 
 chmod 644 ${CRON_FILE}
 
-# ---------- Cleanup & final ----------
+# ---------- FINAL: change SSH port safely (firewall already opened 2222) ----------
+echo "🔒 Đổi SSH port sang 2222 (an toàn: cổng đã mở)..."
+sed -i -E 's/^#?Port .*/Port 2222/' /etc/ssh/sshd_config || true
+# reload firewall already had permanent 2222 added; ensure runtime open too
+firewall-cmd --add-port=2222/tcp || true
+firewall-cmd --reload || true
+systemctl restart sshd || true
+echo "✔️ SSH sẽ lắng nghe trên port 2222. Thử: ssh root@<IP> -p 2222"
+
+# ---------- Cleanup & reboot ----------
 yum clean all || true
 
-clear
+echo ""
 echo "🎉 Hoàn tất cài đặt Pannel Server v2 Pro+ (FINAL)"
 echo "----------------------------------------"
 if [ -n "${ADMIN_DOMAIN}" ]; then
   echo "🌐 Domain: ${ADMIN_DOMAIN}"
-  echo "🔧 Truy cập quản trị: https://${ADMIN_DOMAIN}:${ADMIN_PORT}  (hoặc http://${ADMIN_DOMAIN}:${ADMIN_PORT} nếu chưa có cert)"
+  echo "🔧 Truy cập quản trị: https://${ADMIN_DOMAIN}:${ADMIN_PORT}  (nếu cert đã sẵn sàng) hoặc http://${ADMIN_DOMAIN}:${ADMIN_PORT}"
 else
   echo "🔧 Truy cập quản trị: http://<SERVER_IP>:${ADMIN_PORT}"
 fi
@@ -440,10 +464,6 @@ echo "🔑 MySQL root: root / ${MYSQL_ROOT_PASS}"
 echo "🔁 Daily DB backup: /root/db_backups/ (cron: 00:00)"
 echo "🔒 SSH port: 2222"
 echo "----------------------------------------"
-echo "⚠️ Lưu ý quan trọng:"
-echo " - Nếu muốn dùng HTTPS, hãy chắc domain đã trỏ A record về IP server và port 80/443 mở."
-echo " - Nếu cần thay đổi basic-auth: dùng htpasswd để cập nhật ${HTPASS_FILE}."
-echo ""
-echo "Server sẽ reboot sau 8 giây để đảm bảo services khởi đúng."
-sleep 8
+echo "⏳ Server sẽ tự reboot sau 10 giây để apply mọi thứ..."
+sleep 10
 reboot
