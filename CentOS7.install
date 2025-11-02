@@ -22,7 +22,7 @@ logo
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
 echo "--------------------------------------------------"
 
-# Kiểm tra root
+# ===== Kiểm tra root =====
 if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
@@ -47,7 +47,7 @@ while true; do
     fi
 done
 
-# ===== Tạo random password =====
+# ===== Random passwords =====
 PANEL_DB="panel_db"
 PANEL_USER="panel_user"
 PANEL_PASS=$(openssl rand -base64 12)
@@ -57,7 +57,7 @@ MYSQL_ROOT_PASS=$(openssl rand -base64 16)
 # ===== Firewall =====
 systemctl enable --now firewalld
 
-# ===== Cập nhật & gói cơ bản =====
+# ===== Update & gói cơ bản =====
 yum update -y
 yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python ca-certificates
 
@@ -94,13 +94,24 @@ EOF
 yum clean all
 yum makecache fast
 
-# ===== SSH setup =====
+# ===== SSH setup an toàn =====
 SSH_PORT=2222
-if ! grep -q "^Port $SSH_PORT" /etc/ssh/sshd_config; then
-    sed -i "/^Port /d" /etc/ssh/sshd_config
-    echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
+BACKUP_SSH="/etc/ssh/sshd_config.bak_$(date +%F_%H%M)"
+cp /etc/ssh/sshd_config "$BACKUP_SSH"
+sed -i '/^Port /d' /etc/ssh/sshd_config
+echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
+if ss -tuln | grep -q ":$SSH_PORT"; then
+    echo "❌ Port $SSH_PORT đang bị chiếm, đổi port khác!"
+    exit 1
 fi
-sshd -t && systemctl restart sshd
+setenforce 0
+if sshd -t; then
+    systemctl restart sshd
+    echo "✅ SSHd restart thành công trên port $SSH_PORT"
+else
+    echo "❌ Lỗi sshd config, không restart được!"
+    exit 1
+fi
 firewall-cmd --permanent --add-port=$SSH_PORT/tcp
 firewall-cmd --reload
 
@@ -108,7 +119,6 @@ firewall-cmd --reload
 cp /etc/selinux/config /etc/selinux/config.bak
 setenforce 0
 sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-
 cp /etc/resolv.conf /etc/resolv.conf.bak
 grep -q "nameserver 8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
@@ -116,6 +126,8 @@ grep -q "nameserver 8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /e
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
 yum-config-manager --enable remi-php80
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
+systemctl enable php-fpm
+systemctl start php-fpm
 
 # ===== Remove old MariaDB =====
 systemctl stop mariadb 2>/dev/null || true
@@ -139,8 +151,8 @@ EOF
 
 # ===== Nginx =====
 yum install -y nginx
-systemctl enable nginx php-fpm
-systemctl start nginx php-fpm mariadb
+systemctl enable nginx
+systemctl start nginx
 
 # ===== phpMyAdmin =====
 mkdir -p /var/www/html/phpmyadmin
@@ -166,8 +178,64 @@ EOF
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
+# ===== Detect PHP-FPM socket =====
+PHP_FPM_SOCK="/var/run/php-fpm/www.sock"
+[ ! -S "$PHP_FPM_SOCK" ] && PHP_FPM_SOCK="/run/php-fpm/www.sock"
+
 # ===== Nginx config panel =====
 NGINX_CONF="/etc/nginx/conf.d/panel.conf"
 [ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
+if ss -tuln | awk '{print $4}' | grep -Eq "(:|\\.)${ADMIN_PORT}$"; then
+    echo "❌ Port ${ADMIN_PORT} đang bị chiếm, đổi port khác!"
+    exit 1
+fi
+cat > "$NGINX_CONF" <<EOF
+server {
+    listen ${ADMIN_PORT};
+    server_name ${ADMIN_DOMAIN:-_};
+    root /var/www/html;
+    index index.php index.html index.htm;
 
-if ss -tuln | awk '{print $4}' | grep -Eq "(:|\\.)${
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ \.php\$ {
+        include fastcgi_params;
+        fastcgi_pass unix:${PHP_FPM_SOCK};
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+    }
+}
+EOF
+nginx -t && systemctl restart nginx
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
+firewall-cmd --reload
+
+# ===== SSL Let’s Encrypt =====
+if [ -n "$ADMIN_DOMAIN" ]; then
+  yum install -y epel-release certbot python2-certbot-nginx
+  certbot --nginx -d $ADMIN_DOMAIN --non-interactive --agree-tos -m admin@$ADMIN_DOMAIN --redirect
+  systemctl reload nginx
+fi
+
+# ===== Backup credentials =====
+mkdir -p /root/panel_install_backup
+cat > /root/panel_install_backup/panel_credentials.txt <<EOF
+SSH port: $SSH_PORT
+MySQL root: $MYSQL_ROOT_PASS
+Database panel: $PANEL_DB
+DB user: $PANEL_USER
+DB password: $PANEL_PASS
+Web admin user: admin
+Web admin password: $WEB_ADMIN_PASS
+Panel URL: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
+phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
+FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
+EOF
+chmod 600 /root/panel_install_backup/panel_credentials.txt
+
+# ===== Hoàn tất =====
+echo ""
