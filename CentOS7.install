@@ -7,7 +7,7 @@
 
 set -e
 
-# ========== Cyberpunk Logo ==========
+# ========== Cyberpunk Logo Nhấp Nháy ==========
 logo() {
 echo -e "\e[5;38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
 echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ ___| \e[0m"
@@ -28,7 +28,7 @@ if [ $(id -u) != "0" ]; then
 fi
 
 # Nhập thông tin
-read -p "Nhập domain quản trị server (VD: domain.com): " ADMIN_DOMAIN
+read -p "Nhập domain quản trị server (VD: domain.com) Chú Ý Là Domain Phải Trỏ Về Ip Máy Này Thì Mới Chạy Script Nha ( Nếu Chưa Thì Bỏ Trống ) : " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 read -p "Nhập tên database cho panel (VD: panel_db): " PANEL_DB
 
@@ -131,8 +131,16 @@ wget -O /var/www/html/filemanager/index.php https://raw.githubusercontent.com/pr
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# Nginx server block cho quản trị
-cat > /etc/nginx/conf.d/panel.conf <<EOF
+# --- Nginx safe setup for Panel ---
+NGINX_CONF="/etc/nginx/conf.d/panel.conf"
+[ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
+
+if ss -tuln | grep -q ":${ADMIN_PORT} "; then
+    echo "❌ Port ${ADMIN_PORT} đã bị chiếm, vui lòng đổi port khác!"
+    exit 1
+fi
+
+cat > "$NGINX_CONF" <<EOF
 server {
     listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN};
@@ -153,14 +161,9 @@ server {
 }
 EOF
 
-# Enable php-fpm
-systemctl enable php-fpm
-systemctl restart php-fpm
-
-# Test & reload Nginx
+rm -f /var/run/nginx.pid
 nginx -t && systemctl restart nginx
 
-# Open ports
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --permanent --add-port=${ADMIN_PORT}/tcp
