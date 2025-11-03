@@ -7,7 +7,7 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7Safe V2+\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7 Safe V2+\e[0m"
 }
 
 clear
@@ -70,10 +70,33 @@ yum clean all
 rm -rf /var/cache/yum
 yum makecache fast
 
-# Cài EPEL + Remi + yum-utils
-yum install -y epel-release wget yum-utils
-yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
-yum-config-manager --enable remi-php80
+# ===== Cài EPEL + Remi + yum-utils (fix triệt để) =====
+yum install -y epel-release wget || true
+yum install -y yum-utils || { echo "❌ Cài yum-utils thất bại, kiểm tra mạng/repod. Dừng script."; exit 1; }
+
+# Remove remi cũ nếu có
+if rpm -q remi-release >/dev/null 2>&1; then
+  echo "ℹ️ remi-release đã tồn tại, sẽ remove trước khi cài lại..."
+  yum remove -y remi-release || true
+fi
+
+# Cài remi-release mới
+REMIFILE="/tmp/remi-release-7.rpm"
+wget -O "$REMIFILE" https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+if [ -f "$REMIFILE" ]; then
+  rpm -Uvh --replacepkgs "$REMIFILE" || yum localinstall -y "$REMIFILE"
+  rm -f "$REMIFILE"
+else
+  echo "❌ Không tải được remi-release, kiểm tra kết nối mạng."
+  exit 1
+fi
+
+# Enable PHP 8 repo
+if command -v yum-config-manager >/dev/null 2>&1; then
+  yum-config-manager --enable remi-php80 || { echo "❌ Không thể enable remi-php80, kiểm tra remi repo."; exit 1; }
+else
+  echo "❌ yum-config-manager không tìm thấy dù đã cài yum-utils. Dừng script."; exit 1;
+fi
 
 # MariaDB 10.5 repo
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
