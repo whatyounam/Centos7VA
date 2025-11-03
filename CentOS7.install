@@ -7,33 +7,28 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7/8 Safe V2\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7/8 Safe V3+\e[0m"
 }
 
 clear
 logo
-echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
-echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
-echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
-echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
-echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
-echo "--------------------------------------------------"
+echo "🚀 Bắt đầu cài đặt Panel Server CentOS 7..."
 
-# Root check
+# ===== Root check =====
 if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
 
-# Nhập domain + port
+# ===== Nhập domain + port =====
 read -p "Nhập domain quản trị server (hoặc để trống dùng IP): " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 
-# Nhập user Web admin
+# ===== Nhập user Web admin =====
 read -p "Nhập username quản trị Web admin (mặc định: admin): " WEB_ADMIN_USER
 WEB_ADMIN_USER=${WEB_ADMIN_USER:-admin}
 
-# Random passwords
+# ===== Random passwords =====
 PANEL_DB="panel_db"
 PANEL_USER="panel_user"
 PANEL_PASS=$(openssl rand -base64 12)
@@ -74,11 +69,7 @@ yum install -y epel-release wget yum-utils
 rpm -Uvh --replacepkgs https://rpms.remirepo.net/enterprise/remi-release-7.rpm
 yum-config-manager --enable remi-php80
 
-# ===== MariaDB 10.5 repo mirror chuẩn =====
-if [ -f /etc/yum.repos.d/MariaDB.repo ]; then
-    cp /etc/yum.repos.d/MariaDB.repo /etc/yum.repos.d/MariaDB.repo.bak_$(date +%F_%H%M)
-fi
-
+# ===== MariaDB 10.5 repo =====
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
@@ -94,7 +85,7 @@ yum makecache fast
 yum update -y
 yum install -y nano curl unzip git policycoreutils-python-utils ca-certificates
 
-# ===== SSH safe setup =====
+# ===== SSH setup =====
 SSH_PORT=2222
 read -p "Nhập port SSH (mặc định 2222): " TMP_SSH
 SSH_PORT=${TMP_SSH:-2222}
@@ -116,7 +107,7 @@ yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-c
 systemctl enable php-fpm nginx mariadb
 systemctl start php-fpm nginx mariadb
 
-# ===== MariaDB secure setup + panel DB =====
+# ===== MariaDB setup =====
 mysql -u root <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
@@ -171,11 +162,14 @@ server {
 EOF
 nginx -t && systemctl restart nginx
 
-# ===== Firewall safe panel =====
-read -p "Nhập IP/subnet được phép truy cập panel (dấu phẩy): " ADMIN_IPS
-IFS=',' read -ra IP_ARRAY <<< "$ADMIN_IPS"
-for ip in "${IP_ARRAY[@]}"; do
-    ip=$(echo $ip | xargs)
+# ===== Firewall safe panel chỉ 2 IP =====
+PRIMARY_IP=$(hostname -I | awk '{print $1}')
+echo "IP gốc của máy: $PRIMARY_IP"
+read -p "Nhập 1 IP khác được phép truy cập panel: " EXTRA_IP
+ALLOWED_IPS=("$PRIMARY_IP" "$EXTRA_IP")
+
+firewall-cmd --permanent --remove-rich-rule="rule family='ipv4' port port=${ADMIN_PORT} protocol=tcp drop" 2>/dev/null || true
+for ip in "${ALLOWED_IPS[@]}"; do
     firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$ip' port port=${ADMIN_PORT} protocol=tcp accept"
 done
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' port port=${ADMIN_PORT} protocol=tcp drop"
@@ -191,11 +185,13 @@ DB user: $PANEL_USER
 DB password: $PANEL_PASS
 Web admin user: $WEB_ADMIN_USER
 Web admin password: $WEB_ADMIN_PASS
-Panel URL: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
-phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
-FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
+Panel URL: http://${ADMIN_DOMAIN:-$PRIMARY_IP}:${ADMIN_PORT}
+phpMyAdmin: http://${ADMIN_DOMAIN:-$PRIMARY_IP}:${ADMIN_PORT}/phpmyadmin
+FileManager: http://${ADMIN_DOMAIN:-$PRIMARY_IP}:${ADMIN_PORT}/filemanager
 EOF
 chmod 600 /root/panel_install_backup/panel_credentials.txt
 
-echo "🎉 Hoàn tất cài đặt Panel CentOS 7!"
-echo "Thông tin đăng nhập lưu tại /root/panel_install_backup/panel_credentials.txt"
+# ===== Reboot prompt =====
+echo ""
+read -p "🎉 Hoàn tất cài đặt! Nhấn Enter để reboot máy và áp dụng toàn bộ cài đặt..." 
+reboot
