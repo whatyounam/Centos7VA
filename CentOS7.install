@@ -1,12 +1,5 @@
 #!/bin/bash
-###############################################################
-# 🔥 Safe Panel Server CentOS 7 Installer + phpMyAdmin + TinyFileManager + HTTPS
-# ✅ PHP 8.0 + MariaDB 10.5 + Nginx + phpMyAdmin + TinyFileManager
-# 👑 Copyright (C) 2025 Việt_Anh_Code™
-###############################################################
-
 set -e
-
 # ===== Logo =====
 logo() {
 echo -e "\e[5;38;5;45m     ____  _   _  _____ _   _  _   _   ____  _   _  ____  \e[0m"
@@ -14,7 +7,7 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Panel CentOS 7 Safe V2 \e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7Safe V2+\e[0m"
 }
 
 clear
@@ -26,32 +19,32 @@ echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
 echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
 echo "--------------------------------------------------"
 
-# ===== Root check =====
+# Root check
 if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
 
-# ===== Nhập domain + port =====
-read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
+# Nhập domain + port
+read -p "Nhập domain quản trị server (hoặc để trống dùng IP): " ADMIN_DOMAIN
 read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 
-# ===== Nhập user quản trị Web admin =====
+# Nhập user Web admin
 read -p "Nhập username quản trị Web admin (mặc định: admin): " WEB_ADMIN_USER
 WEB_ADMIN_USER=${WEB_ADMIN_USER:-admin}
 
-# ===== Random passwords =====
+# Random passwords
 PANEL_DB="panel_db"
 PANEL_USER="panel_user"
 PANEL_PASS=$(openssl rand -base64 12)
 WEB_ADMIN_PASS=$(openssl rand -base64 12)
 MYSQL_ROOT_PASS=$(openssl rand -base64 16)
 
-# ===== Backup & disable repo cũ =====
+# Backup & disable repo cũ
 mkdir -p /etc/yum.repos.d/backup
 mv /etc/yum.repos.d/CentOS-*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true
 
-# ===== Vault repo =====
+# Vault repo
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
 name=CentOS-7 - Base - Archive
@@ -72,17 +65,17 @@ gpgcheck=0
 enabled=1
 EOF
 
-# ===== Clean & rebuild yum =====
+# Clean cache
 yum clean all
 rm -rf /var/cache/yum
 yum makecache fast
 
-# ===== EPEL + Remi repo =====
-yum install -y epel-release
+# Cài EPEL + Remi + yum-utils
+yum install -y epel-release wget yum-utils
 yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
 yum-config-manager --enable remi-php80
 
-# ===== MariaDB 10.5 repo =====
+# MariaDB 10.5 repo
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
@@ -93,35 +86,33 @@ EOF
 yum clean all
 yum makecache fast
 
-# ===== Update & base packages =====
+# Update & base packages
 yum update -y
-yum install -y wget nano curl unzip git policycoreutils-python-utils ca-certificates
+yum install -y nano curl unzip git policycoreutils-python-utils ca-certificates
 
-# ===== SSH setup =====
+# SSH setup
 SSH_PORT=2222
 read -p "Nhập port SSH (mặc định 2222): " TMP_SSH
 SSH_PORT=${TMP_SSH:-2222}
-
-BACKUP_SSH="/etc/ssh/sshd_config.bak_$(date +%F_%H%M)"
-cp /etc/ssh/sshd_config "$BACKUP_SSH"
+cp /etc/ssh/sshd_config "/etc/ssh/sshd_config.bak_$(date +%F_%H%M)"
 sed -i '/^Port /d' /etc/ssh/sshd_config
 echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
 setenforce 0 || true
 systemctl restart sshd
 
-# ===== Firewall base =====
+# Firewall base
 systemctl enable --now firewalld
 firewall-cmd --permanent --add-port=$SSH_PORT/tcp
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --reload
 
-# ===== PHP 8 + Nginx + MariaDB =====
+# PHP 8 + Nginx + MariaDB
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl nginx MariaDB-server MariaDB-client
 systemctl enable php-fpm nginx mariadb
 systemctl start php-fpm nginx mariadb
 
-# ===== MariaDB secure setup + panel DB =====
+# MariaDB secure setup + panel DB
 mysql -u root <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
@@ -131,7 +122,7 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO '${PANEL_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# ===== phpMyAdmin =====
+# phpMyAdmin
 mkdir -p /var/www/html/phpmyadmin
 wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
 unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
@@ -140,12 +131,10 @@ rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.z
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# ===== TinyFileManager =====
+# TinyFileManager
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
-
-TINYFM_CONFIG="/var/www/html/filemanager/tfm-config.php"
-cat > $TINYFM_CONFIG <<EOF
+cat > /var/www/html/filemanager/tfm-config.php <<EOF
 <?php
 \$username = '$WEB_ADMIN_USER';
 \$password = '$WEB_ADMIN_PASS';
@@ -156,24 +145,18 @@ EOF
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# ===== Detect PHP-FPM socket =====
+# Detect PHP-FPM socket
 PHP_FPM_SOCK="/var/run/php-fpm/www.sock"
 [ ! -S "$PHP_FPM_SOCK" ] && PHP_FPM_SOCK="/run/php-fpm/www.sock"
 
-# ===== Nginx config panel =====
-NGINX_CONF="/etc/nginx/conf.d/panel.conf"
-[ -f "$NGINX_CONF" ] && cp "$NGINX_CONF" "${NGINX_CONF}.bak"
-cat > "$NGINX_CONF" <<EOF
+# Nginx config panel
+cat > "/etc/nginx/conf.d/panel.conf" <<EOF
 server {
     listen ${ADMIN_PORT};
     server_name ${ADMIN_DOMAIN:-_};
     root /var/www/html;
     index index.php index.html index.htm;
-
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-
+    location / { try_files \$uri \$uri/ =404; }
     location ~ \.php\$ {
         include fastcgi_params;
         fastcgi_pass unix:${PHP_FPM_SOCK};
@@ -184,20 +167,31 @@ server {
 EOF
 nginx -t && systemctl restart nginx
 
-# ===== SSL Let's Encrypt =====
-if [ -n "$ADMIN_DOMAIN" ]; then
-  if ping -c1 "$ADMIN_DOMAIN" >/dev/null 2>&1; then
-    yum install -y epel-release certbot python3-certbot-nginx
-    certbot --nginx -d $ADMIN_DOMAIN --non-interactive --agree-tos -m admin@$ADMIN_DOMAIN --redirect || echo "⚠️ SSL Cert failed, domain chưa trỏ?"
-    systemctl reload nginx
-  else
-    echo "⚠️ Domain $ADMIN_DOMAIN chưa trỏ, bỏ qua SSL."
-  fi
-fi
-
-# ===== Firewall safe panel (nhiều IP/subnet) =====
-read -p "Nhập IP/subnet được phép truy cập admin panel, cách nhau dấu phẩy (VD: 1.2.3.5,192.168.1.0/24): " ADMIN_IPS
+# Firewall safe panel
+read -p "Nhập IP/subnet được phép truy cập panel (dấu phẩy): " ADMIN_IPS
 IFS=',' read -ra IP_ARRAY <<< "$ADMIN_IPS"
 for ip in "${IP_ARRAY[@]}"; do
     ip=$(echo $ip | xargs)
-    firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$ip' port port=${ADMIN_PORT
+    firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$ip' port port=${ADMIN_PORT} protocol=tcp accept"
+done
+firewall-cmd --permanent --add-rich-rule="rule family='ipv4' port port=${ADMIN_PORT} protocol=tcp drop"
+firewall-cmd --reload
+
+# Backup credentials
+mkdir -p /root/panel_install_backup
+cat > /root/panel_install_backup/panel_credentials.txt <<EOF
+SSH port: $SSH_PORT
+MySQL root: $MYSQL_ROOT_PASS
+Database panel: $PANEL_DB
+DB user: $PANEL_USER
+DB password: $PANEL_PASS
+Web admin user: $WEB_ADMIN_USER
+Web admin password: $WEB_ADMIN_PASS
+Panel URL: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
+phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
+FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
+EOF
+chmod 600 /root/panel_install_backup/panel_credentials.txt
+
+echo "🎉 Hoàn tất cài đặt Panel CentOS 7!"
+echo "Thông tin đăng nhập lưu tại /root/panel_install_backup/panel_credentials.txt"
