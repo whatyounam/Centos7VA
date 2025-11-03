@@ -14,7 +14,7 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Safe V2 + HTTPS\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Safe Panel For CentOS\e[0m"
 }
 
 clear
@@ -31,6 +31,34 @@ if [ $(id -u) != "0" ]; then
   echo "❌ Cần chạy bằng quyền root!"
   exit 1
 fi
+
+# ===== Fix repo thối CentOS 7 =====
+REPO_FILE="/etc/yum.repos.d/CentOS-Archive.repo"
+[ -f "$REPO_FILE" ] && rm -f "$REPO_FILE"
+
+cat > "$REPO_FILE" <<EOF
+[base]
+name=CentOS-7 - Base - Archive
+baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
+gpgcheck=0
+enabled=1
+
+[updates]
+name=CentOS-7 - Updates - Archive
+baseurl=http://vault.centos.org/7.9.2009/updates/x86_64/
+gpgcheck=0
+enabled=1
+
+[extras]
+name=CentOS-7 - Extras - Archive
+baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
+gpgcheck=0
+enabled=1
+EOF
+
+yum clean all
+yum makecache fast
+echo "🔹 Repo CentOS 7 đã fix xong."
 
 # ===== Nhập domain + port =====
 read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
@@ -53,31 +81,6 @@ systemctl enable --now firewalld
 # ===== Update & install base packages =====
 yum update -y
 yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python-utils ca-certificates git
-
-# ===== Fix CentOS Vault repo =====
-mkdir -p /etc/yum.repos.d/backup
-mv /etc/yum.repos.d/CentOS-*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true
-cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
-[base]
-name=CentOS-7 - Base - Archive
-baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
-gpgcheck=0
-enabled=1
-
-[updates]
-name=CentOS-7 - Updates - Archive
-baseurl=http://vault.centos.org/7.9.2009/updates/x86_64/
-gpgcheck=0
-enabled=1
-
-[extras]
-name=CentOS-7 - Extras - Archive
-baseurl=http://vault.centos.org/7.9.2009/extras/x86_64/
-gpgcheck=0
-enabled=1
-EOF
-yum clean all
-yum makecache fast
 
 # ===== MariaDB 10.5 repo =====
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
@@ -155,7 +158,6 @@ chmod -R 755 /var/www/html/phpmyadmin
 # ===== TinyFileManager =====
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
-
 TINYFM_CONFIG="/var/www/html/filemanager/tfm-config.php"
 cat > $TINYFM_CONFIG <<EOF
 <?php
@@ -207,7 +209,7 @@ if [ -n "$ADMIN_DOMAIN" ]; then
   fi
 fi
 
-# ===== Firewall safe setup (nhiều IP/subnet) =====
+# ===== Firewall safe setup =====
 read -p "Nhập IP hoặc subnet được phép truy cập admin panel, cách nhau bằng dấu phẩy (ví dụ: 1.2.3.5,192.168.1.0/24): " ADMIN_IPS
 IFS=',' read -ra IP_ARRAY <<< "$ADMIN_IPS"
 
