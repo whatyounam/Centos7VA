@@ -7,7 +7,7 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7 Safe V2+\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | CentOS 7/8 Safe V2\e[0m"
 }
 
 clear
@@ -40,11 +40,11 @@ PANEL_PASS=$(openssl rand -base64 12)
 WEB_ADMIN_PASS=$(openssl rand -base64 12)
 MYSQL_ROOT_PASS=$(openssl rand -base64 16)
 
-# Backup & disable repo cũ
+# ===== Backup & disable repo cũ =====
 mkdir -p /etc/yum.repos.d/backup
 mv /etc/yum.repos.d/CentOS-*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true
 
-# Vault repo
+# ===== Vault repo CentOS 7 =====
 cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
 name=CentOS-7 - Base - Archive
@@ -65,55 +65,36 @@ gpgcheck=0
 enabled=1
 EOF
 
-# Clean cache
 yum clean all
 rm -rf /var/cache/yum
 yum makecache fast
 
-# ===== Cài EPEL + Remi + yum-utils (fix triệt để) =====
-yum install -y epel-release wget || true
-yum install -y yum-utils || { echo "❌ Cài yum-utils thất bại, kiểm tra mạng/repod. Dừng script."; exit 1; }
+# ===== EPEL + Yum-utils + Remi =====
+yum install -y epel-release wget yum-utils
+rpm -Uvh --replacepkgs https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+yum-config-manager --enable remi-php80
 
-# Remove remi cũ nếu có
-if rpm -q remi-release >/dev/null 2>&1; then
-  echo "ℹ️ remi-release đã tồn tại, sẽ remove trước khi cài lại..."
-  yum remove -y remi-release || true
+# ===== MariaDB 10.5 repo mirror chuẩn =====
+if [ -f /etc/yum.repos.d/MariaDB.repo ]; then
+    cp /etc/yum.repos.d/MariaDB.repo /etc/yum.repos.d/MariaDB.repo.bak_$(date +%F_%H%M)
 fi
 
-# Cài remi-release mới
-REMIFILE="/tmp/remi-release-7.rpm"
-wget -O "$REMIFILE" https://rpms.remirepo.net/enterprise/remi-release-7.rpm
-if [ -f "$REMIFILE" ]; then
-  rpm -Uvh --replacepkgs "$REMIFILE" || yum localinstall -y "$REMIFILE"
-  rm -f "$REMIFILE"
-else
-  echo "❌ Không tải được remi-release, kiểm tra kết nối mạng."
-  exit 1
-fi
-
-# Enable PHP 8 repo
-if command -v yum-config-manager >/dev/null 2>&1; then
-  yum-config-manager --enable remi-php80 || { echo "❌ Không thể enable remi-php80, kiểm tra remi repo."; exit 1; }
-else
-  echo "❌ yum-config-manager không tìm thấy dù đã cài yum-utils. Dừng script."; exit 1;
-fi
-
-# MariaDB 10.5 repo
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
 [mariadb]
 name = MariaDB
-baseurl = http://yum.mariadb.org/10.5/centos7-amd64
-gpgcheck = 1
+baseurl = https://mirror.mariadb.org/yum/10.5/centos7-amd64
 gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB
+gpgcheck=1
 EOF
+
 yum clean all
 yum makecache fast
 
-# Update & base packages
+# ===== Update & base packages =====
 yum update -y
 yum install -y nano curl unzip git policycoreutils-python-utils ca-certificates
 
-# SSH setup
+# ===== SSH safe setup =====
 SSH_PORT=2222
 read -p "Nhập port SSH (mặc định 2222): " TMP_SSH
 SSH_PORT=${TMP_SSH:-2222}
@@ -123,19 +104,19 @@ echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
 setenforce 0 || true
 systemctl restart sshd
 
-# Firewall base
+# ===== Firewall base =====
 systemctl enable --now firewalld
 firewall-cmd --permanent --add-port=$SSH_PORT/tcp
 firewall-cmd --permanent --add-port=80/tcp
 firewall-cmd --permanent --add-port=443/tcp
 firewall-cmd --reload
 
-# PHP 8 + Nginx + MariaDB
+# ===== PHP 8 + Nginx + MariaDB =====
 yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl nginx MariaDB-server MariaDB-client
 systemctl enable php-fpm nginx mariadb
 systemctl start php-fpm nginx mariadb
 
-# MariaDB secure setup + panel DB
+# ===== MariaDB secure setup + panel DB =====
 mysql -u root <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
@@ -145,7 +126,7 @@ GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO '${PANEL_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
 
-# phpMyAdmin
+# ===== phpMyAdmin =====
 mkdir -p /var/www/html/phpmyadmin
 wget -O /tmp/phpmyadmin.zip https://files.phpmyadmin.net/phpMyAdmin/5.2.1/phpMyAdmin-5.2.1-all-languages.zip
 unzip /tmp/phpmyadmin.zip -d /var/www/html/phpmyadmin/
@@ -154,7 +135,7 @@ rm -rf /var/www/html/phpmyadmin/phpMyAdmin-5.2.1-all-languages /tmp/phpmyadmin.z
 chown -R nginx:nginx /var/www/html/phpmyadmin
 chmod -R 755 /var/www/html/phpmyadmin
 
-# TinyFileManager
+# ===== TinyFileManager =====
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
 cat > /var/www/html/filemanager/tfm-config.php <<EOF
@@ -168,11 +149,11 @@ EOF
 chown -R nginx:nginx /var/www/html/filemanager
 chmod -R 755 /var/www/html/filemanager
 
-# Detect PHP-FPM socket
+# ===== Detect PHP-FPM socket =====
 PHP_FPM_SOCK="/var/run/php-fpm/www.sock"
 [ ! -S "$PHP_FPM_SOCK" ] && PHP_FPM_SOCK="/run/php-fpm/www.sock"
 
-# Nginx config panel
+# ===== Nginx config panel =====
 cat > "/etc/nginx/conf.d/panel.conf" <<EOF
 server {
     listen ${ADMIN_PORT};
@@ -190,7 +171,7 @@ server {
 EOF
 nginx -t && systemctl restart nginx
 
-# Firewall safe panel
+# ===== Firewall safe panel =====
 read -p "Nhập IP/subnet được phép truy cập panel (dấu phẩy): " ADMIN_IPS
 IFS=',' read -ra IP_ARRAY <<< "$ADMIN_IPS"
 for ip in "${IP_ARRAY[@]}"; do
@@ -200,7 +181,7 @@ done
 firewall-cmd --permanent --add-rich-rule="rule family='ipv4' port port=${ADMIN_PORT} protocol=tcp drop"
 firewall-cmd --reload
 
-# Backup credentials
+# ===== Backup credentials =====
 mkdir -p /root/panel_install_backup
 cat > /root/panel_install_backup/panel_credentials.txt <<EOF
 SSH port: $SSH_PORT
