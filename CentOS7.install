@@ -20,6 +20,10 @@ echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Cyberpunk Safe V2
 clear
 logo
 echo "🚀 Bắt đầu cài đặt Pannel Server CentOS 7..."
+echo " Lưu Ý Phiên Bản Này Dành Cho CentOS 7/8 : Rocky/Alma linux 7/8 "
+echo " Nếu Ai Cài Trên VMware/VirtualBox Thì Hãy Xoá Và Tải Lại Repo Để Tránh Lỗi "
+echo " Nhớ Cài Cái Fix Repo Này Trước Khi Chạy Scipt Bên Dưới "
+echo " link :https://www.mediafire.com/file/i6070ayons3b9gy/Fix_EROR_Repo.txt/file"
 echo "--------------------------------------------------"
 
 # ===== Root check =====
