@@ -14,7 +14,7 @@ echo -e "\e[5;38;5;213m    |  _ \\| \\ | || ____| \\ | || \\ | | / ___|| | | |/ 
 echo -e "\e[5;38;5;45m    | |_) |  \\| ||  _| |  \\| ||  \\| | \\___ \\| | | | |  _   \e[0m"
 echo -e "\e[5;38;5;213m    |  __/| |\\  || |___| |\\  || |\\  |  ___) | |_| | |_| |  \e[0m"
 echo -e "\e[5;38;5;201m    |_|   |_| \\_||_____|_| \\_||_| \\_| |____/ \\___/ \\____|  \e[0m"
-echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Safe Panel For CentOS\e[0m"
+echo -e "\e[5;38;5;45m          👑 Việt_Anh_Code™ 2025 | Panel CentOS 7 Safe V2 \e[0m"
 }
 
 clear
@@ -32,11 +32,27 @@ if [ $(id -u) != "0" ]; then
   exit 1
 fi
 
-# ===== Fix repo thối CentOS 7 =====
-REPO_FILE="/etc/yum.repos.d/CentOS-Archive.repo"
-[ -f "$REPO_FILE" ] && rm -f "$REPO_FILE"
+# ===== Nhập domain + port =====
+read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
+read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
 
-cat > "$REPO_FILE" <<EOF
+# ===== Nhập user quản trị Web admin =====
+read -p "Nhập username quản trị Web admin (mặc định: admin): " WEB_ADMIN_USER
+WEB_ADMIN_USER=${WEB_ADMIN_USER:-admin}
+
+# ===== Random passwords =====
+PANEL_DB="panel_db"
+PANEL_USER="panel_user"
+PANEL_PASS=$(openssl rand -base64 12)
+WEB_ADMIN_PASS=$(openssl rand -base64 12)
+MYSQL_ROOT_PASS=$(openssl rand -base64 16)
+
+# ===== Backup & disable repo cũ =====
+mkdir -p /etc/yum.repos.d/backup
+mv /etc/yum.repos.d/CentOS-*.repo /etc/yum.repos.d/backup/ 2>/dev/null || true
+
+# ===== Vault repo =====
+cat > /etc/yum.repos.d/CentOS-Archive.repo <<EOF
 [base]
 name=CentOS-7 - Base - Archive
 baseurl=http://vault.centos.org/7.9.2009/os/x86_64/
@@ -56,31 +72,15 @@ gpgcheck=0
 enabled=1
 EOF
 
+# ===== Clean & rebuild yum =====
 yum clean all
+rm -rf /var/cache/yum
 yum makecache fast
-echo "🔹 Repo CentOS 7 đã fix xong."
 
-# ===== Nhập domain + port =====
-read -p "Nhập domain quản trị server (VD: domain.com hoặc để trống dùng IP): " ADMIN_DOMAIN
-read -p "Nhập port quản trị server (VD: 2025): " ADMIN_PORT
-
-# ===== Nhập user quản trị Web admin =====
-read -p "Nhập username quản trị Web admin (mặc định: admin): " WEB_ADMIN_USER
-WEB_ADMIN_USER=${WEB_ADMIN_USER:-admin}
-
-# ===== Random passwords =====
-PANEL_DB="panel_db"
-PANEL_USER="panel_user"
-PANEL_PASS=$(openssl rand -base64 12)
-WEB_ADMIN_PASS=$(openssl rand -base64 12)
-MYSQL_ROOT_PASS=$(openssl rand -base64 16)
-
-# ===== Firewall base setup =====
-systemctl enable --now firewalld
-
-# ===== Update & install base packages =====
-yum update -y
-yum install -y wget nano curl epel-release yum-utils unzip policycoreutils-python-utils ca-certificates git
+# ===== EPEL + Remi repo =====
+yum install -y epel-release
+yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+yum-config-manager --enable remi-php80
 
 # ===== MariaDB 10.5 repo =====
 cat > /etc/yum.repos.d/MariaDB.repo <<EOF
@@ -93,45 +93,35 @@ EOF
 yum clean all
 yum makecache fast
 
-# ===== SSH safe setup =====
+# ===== Update & base packages =====
+yum update -y
+yum install -y wget nano curl unzip git policycoreutils-python-utils ca-certificates
+
+# ===== SSH setup =====
 SSH_PORT=2222
+read -p "Nhập port SSH (mặc định 2222): " TMP_SSH
+SSH_PORT=${TMP_SSH:-2222}
+
 BACKUP_SSH="/etc/ssh/sshd_config.bak_$(date +%F_%H%M)"
 cp /etc/ssh/sshd_config "$BACKUP_SSH"
 sed -i '/^Port /d' /etc/ssh/sshd_config
-
-while ss -tuln | grep -q ":$SSH_PORT"; do
-    read -p "Port $SSH_PORT đang chiếm, nhập port SSH khác: " SSH_PORT
-done
-
 echo "Port $SSH_PORT" >> /etc/ssh/sshd_config
 setenforce 0 || true
-if sshd -t; then
-    systemctl restart sshd
-    echo "✅ SSHd restart thành công trên port $SSH_PORT"
-else
-    echo "❌ Lỗi sshd config, không restart được!"
-    exit 1
-fi
+systemctl restart sshd
 
-# ===== SELinux disable & DNS =====
-cp /etc/selinux/config /etc/selinux/config.bak
-sed -i 's/SELINUX=enforcing/SELINUX=disabled/g' /etc/selinux/config
-cp /etc/resolv.conf /etc/resolv.conf.bak
-grep -q "nameserver 8.8.8.8" /etc/resolv.conf || echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+# ===== Firewall base =====
+systemctl enable --now firewalld
+firewall-cmd --permanent --add-port=$SSH_PORT/tcp
+firewall-cmd --permanent --add-port=80/tcp
+firewall-cmd --permanent --add-port=443/tcp
+firewall-cmd --reload
 
-# ===== PHP 8.0 =====
-yum install -y https://rpms.remirepo.net/enterprise/remi-release-7.rpm
-yum-config-manager --enable remi-php80
-yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl
-systemctl enable php-fpm
-systemctl start php-fpm
+# ===== PHP 8 + Nginx + MariaDB =====
+yum install -y php php-cli php-fpm php-mysqlnd php-mbstring php-xml php-gd php-curl nginx MariaDB-server MariaDB-client
+systemctl enable php-fpm nginx mariadb
+systemctl start php-fpm nginx mariadb
 
-# ===== MariaDB install =====
-yum install -y MariaDB-server MariaDB-client
-systemctl enable mariadb
-systemctl start mariadb
-
-# ===== MariaDB setup =====
+# ===== MariaDB secure setup + panel DB =====
 mysql -u root <<EOF
 ALTER USER 'root'@'localhost' IDENTIFIED BY '${MYSQL_ROOT_PASS}';
 FLUSH PRIVILEGES;
@@ -140,11 +130,6 @@ CREATE USER IF NOT EXISTS '${PANEL_USER}'@'localhost' IDENTIFIED BY '${PANEL_PAS
 GRANT ALL PRIVILEGES ON ${PANEL_DB}.* TO '${PANEL_USER}'@'localhost';
 FLUSH PRIVILEGES;
 EOF
-
-# ===== Nginx =====
-yum install -y nginx
-systemctl enable nginx
-systemctl start nginx
 
 # ===== phpMyAdmin =====
 mkdir -p /var/www/html/phpmyadmin
@@ -158,6 +143,7 @@ chmod -R 755 /var/www/html/phpmyadmin
 # ===== TinyFileManager =====
 mkdir -p /var/www/html/filemanager
 wget -O /var/www/html/filemanager/index.php https://github.com/prasathmani/tinyfilemanager/releases/download/2.4.13/tinyfilemanager.php
+
 TINYFM_CONFIG="/var/www/html/filemanager/tfm-config.php"
 cat > $TINYFM_CONFIG <<EOF
 <?php
@@ -198,7 +184,7 @@ server {
 EOF
 nginx -t && systemctl restart nginx
 
-# ===== SSL Let’s Encrypt =====
+# ===== SSL Let's Encrypt =====
 if [ -n "$ADMIN_DOMAIN" ]; then
   if ping -c1 "$ADMIN_DOMAIN" >/dev/null 2>&1; then
     yum install -y epel-release certbot python3-certbot-nginx
@@ -209,40 +195,9 @@ if [ -n "$ADMIN_DOMAIN" ]; then
   fi
 fi
 
-# ===== Firewall safe setup =====
-read -p "Nhập IP hoặc subnet được phép truy cập admin panel, cách nhau bằng dấu phẩy (ví dụ: 1.2.3.5,192.168.1.0/24): " ADMIN_IPS
+# ===== Firewall safe panel (nhiều IP/subnet) =====
+read -p "Nhập IP/subnet được phép truy cập admin panel, cách nhau dấu phẩy (VD: 1.2.3.5,192.168.1.0/24): " ADMIN_IPS
 IFS=',' read -ra IP_ARRAY <<< "$ADMIN_IPS"
-
-firewall-cmd --permanent --add-port=$SSH_PORT/tcp
-firewall-cmd --permanent --add-port=80/tcp
-firewall-cmd --permanent --add-port=443/tcp
-
 for ip in "${IP_ARRAY[@]}"; do
     ip=$(echo $ip | xargs)
-    firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$ip' port port=${ADMIN_PORT} protocol=tcp accept"
-done
-
-firewall-cmd --permanent --add-rich-rule="rule family='ipv4' port port=${ADMIN_PORT} protocol=tcp drop"
-firewall-cmd --reload
-echo "✅ Firewall panel đã được cấu hình cho các IP/subnet: $ADMIN_IPS"
-
-# ===== Backup credentials =====
-mkdir -p /root/panel_install_backup
-cat > /root/panel_install_backup/panel_credentials.txt <<EOF
-SSH port: $SSH_PORT
-MySQL root: $MYSQL_ROOT_PASS
-Database panel: $PANEL_DB
-DB user: $PANEL_USER
-DB password: $PANEL_PASS
-Web admin user: $WEB_ADMIN_USER
-Web admin password: $WEB_ADMIN_PASS
-Panel URL: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}
-phpMyAdmin: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/phpmyadmin
-FileManager: http://${ADMIN_DOMAIN:-$(hostname -I | awk '{print $1}')}:${ADMIN_PORT}/filemanager
-EOF
-chmod 600 /root/panel_install_backup/panel_credentials.txt
-
-# ===== Hoàn tất =====
-echo ""
-echo "🎉 Hoàn tất cài đặt!"
-echo "Thông tin đăng nhập lưu tại /root/panel_install_backup/panel_credentials.txt"
+    firewall-cmd --permanent --add-rich-rule="rule family='ipv4' source address='$ip' port port=${ADMIN_PORT
